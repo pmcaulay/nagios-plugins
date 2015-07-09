@@ -1,0 +1,127 @@
+#
+# Parameter and threshold configuration for the custom log file watcher
+# Last updated 2012-09-19 by Peter Mc Aulay
+#
+# Format:
+#
+# [configuration]
+# keyword = log path
+# timestamp = date(1) format string
+#
+# [parameter]
+# desc = free text describing the parameter
+# pattern = optional filter
+# col = column number of this parameter (first = 1)
+# threshold = value to test against
+# warn = warning threshold
+# crit = critical threshold
+# custom = custom parameters passed literally to check_log3.pl
+#
+# Notes:
+#
+# 1. The Configuration Block
+#
+# The configuration block is mandatory and must contain at least one keyword.
+# The keywords in this block define the log file locations that you want to be
+# known to the check_dpm script.  You can use this to define log locations for
+# different environments.
+#
+# The keyword "timestamp" is optional and must contain a format string as
+# understood by the date(1) command, if present and not empty.  If no timestamp
+# string is defined the log name is taken literally.  If it is defined, the
+# log names are interpreted as a path and name prefix which the script will
+# append the timestamp to, to find the current log file.  If there are filename
+# components after the timestamp, the script will find them automatically.
+#
+# You may not use any of the parameter option names as keywords.
+#
+# 2. Parameter Blocks
+#
+# The parameter blocks describe the parameters in the log file that can be
+# monitored by passing the appropriate options to check_log3.pl.
+#
+# Available options:
+# - desc: free text describing the parameter.  It is returned in the Nagios
+#   alert output.
+# - pattern: regexp pattern that the log file is filtered through before any
+#   additional parsing (threshold checking) is done.  The default pattern is
+#   a semi-colon (;), which matches any CSV formatted line.
+# - col: the column number containing the parameter to check.  The first
+#   column in the log is number 1.
+# - threshold: the number the values in column col are compared against.
+# - warn and crit:  the number of times threshold may be exceeded before an
+#   alert is raised.  If warn or crit are expressed as a percentage, they are
+#   taken to refer to the percentage of lines matching pattern that exceed
+#   the threshold.
+# - custom: passed literally to check_log3.pl.  If defined, replaces the
+#   threshold check.  Col, threshold and desc will be ignored.
+#
+# If no column number is defined, warn and crit apply to the total number of
+# lines that match the pattern, and the threshold value is ignored.  In that
+# case the pattern is not optional.
+#
+# If custom is defined, it is assumed it will replace the built-in threshold
+# check, and the only options passed to check_log3.pl will be pattern, warn,
+# crit and custom.
+#
+# Otherwise, col, threshold and at least one of warn and crit are mandatory.
+#
+# Lines beginning with the hash character (#) are ignored.
+#
+
+[configuration]
+test = /data/logs/testuser/server/log-
+production = /data/logs/produser/server/log-
+timestamp = %m-%d-%Y
+
+# Some examples, in order of increasing complexity.
+
+# Return a critical alert if the log stops growing.  Note that we don't care
+# about the log content.
+[frozen]
+desc = Processing halted
+pattern = a string which never matches
+custom = -D
+
+# Alert if more than 5% (or 10%) of new lines created between checks contain
+# the string ";ERROR;" (assumes this is a Euro-locale Excel CSV file).
+# Note: no column number, so no parsing (because we need to test against the
+# total line count)
+[errors]
+desc = Too many errors
+pattern = ;ERROR;
+warn = 5%
+crit = 10%
+
+# Alert if more than 100 (250) new lines have a value in the 5th column
+# higher than 500.
+[startuptime]
+desc = Process startup time too long
+col = 10
+threshold = 500
+warn = 100
+crit = 250
+
+# Compute the percentage of newly created lines with a OK state where column
+# 11 has a value of more than 5000, and alert if this is the case for more
+# than 10% (25%) of them.
+[proctime]
+desc = Overall processing time too long
+pattern = ;OK;
+col = 11
+threshold = 5000
+warn = 10%
+crit = 25%
+
+# Compute the percentage of newly created lines with a OK state which have a
+# mean value higher than 30000.  The mean value is computed by dividing the value
+# in column 14 (time) by the value in column 8 (number of files).
+# Alert if the mean value is more than 30000 in more than 25% (or 50%) of lines.
+[convtime]
+pattern = ;OK;
+warn = 25%
+crit = 50%
+# Notes:
+# - in Perl, the column numbers are 0-based
+# - the number of files may be zero
+custom = -e '{ my @fields = split(/;/); if ($fields[7] > 0 && (($fields[13] / $fields[7]) > 30000)) { $parse_out = "Conversion time alert\n"; return 1 }}'

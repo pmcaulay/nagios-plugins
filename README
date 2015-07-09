@@ -1,0 +1,20 @@
+This is a repository for various Nagios-related tools.
+
+check_log3.pl is a log file parser for Nagios and Nagios-derived monitoring tools.
+Described in detail at http://exchange.nagios.org/directory/Plugins/Log-Files/check_log3-2Epl/details
+check_log3.exe is a compiled Windows executable of same.
+check_customlog is a wrapper for check_log3.pl which makes it easier to maintain sets of configuration.
+
+check_log2.pl is an older version of same, without the custom eval block support.
+
+check_netapp-du is a disk space checker for NetApp filers, it interrogates the NAS via SNMP.  Based on an older plugin by Rob Hassing.
+Described in detail at http://exchange.nagios.org/directory/Plugins/Hardware/Storage-Systems/SAN-and-NAS/NetApp/check_netapp-2Ddu/details
+
+It supports both volumes and subdirectories with user quota aka QTrees.  It can use a mapping file (netapp-shares.map) and some basic heuristics to translate Windows share names to volume/Qtree names (CIFS share names are not exposed viaSNMP).
+It uses cache files for performance, which must be regenerated regularly.  If you use Opsview you can use netapp-gencache to automate this.
+
+rrd2csv_new.pl is a tool to dump RRD files in CSV format, based on rrd2csv.pl by wrhoop r3 Oct 29, 2010.
+Unlike the original it can combine multiple RRD files into a CSV file with multiple columns.  I use this to export Nagios's perfdata.
+Use the gencsv_new.sh script as a wrapper - it takes a find(1) expression as input.
+
+check_file_age.pl is a Nagios plugin to monitor the age (last modified time) of files and/or directories, and generates alerts if the files are too old.

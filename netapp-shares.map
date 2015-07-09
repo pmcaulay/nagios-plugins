@@ -1,0 +1,18 @@
+#
+# NetApp CIFS share to volume/qtree path mappings, for check_netapp-du
+# Last updated 2012-05-14 by Peter Mc Aulay
+#
+# Syntax:
+# host:share:path
+#
+# The host is the hostname from Nagios.  The share is the CIFS share name as
+# passed from Nagios.  The path doesn't need to be exactly correct, just good
+# enough for check_netapp-du to find.  Lines beginning with '#' are ignored.
+#
+
+# Examples:
+#fileserver01:home$:/vol/v_homedir_1/
+#fileserver01:webstat:/vol/v_d100v1/itcost/webstat
+#fileserver02:DR:/vol/v_application/DR
+#fileserver02:ESX$:/vol/v_esx
+#fileserver21:www3_prd:/vol/v_nfs21/db/www3_prd

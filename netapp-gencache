@@ -1,0 +1,35 @@
+#!/bin/sh
+#
+# Pre-generate NetApp volume and qtree cache files for check_netapp-du plugin
+# Last updated 2013-01-30 by Peter Mc Aulay
+#
+
+# Paths
+CHECKCMD=/data/opsview/nagios/libexec/check_netapp-du
+CACHEPATH=/data/scripts/nagios/NAS
+# MySQL config
+MSQLID=monitor
+MSQLPW=nagios
+MSQLSOCKET=/data/mysql/mysql.sock
+
+# No configurable parts below this line
+
+# Get list of NAS files
+FILERS=`echo 'SELECT h.name FROM hosts AS h, hostgroups AS g WHERE g.id = h.hostgroup AND g.name = "NetApp Filers"'|mysql --skip-column-names -u$MSQLID -p$MSQLPW -S $MSQLSOCKET opsview`
+
+for i in $FILERS; do
+        echo `date +"%D %T"` $i
+        $CHECKCMD -H $i -v aggr0 -w 100 -c 100 --force-gencache
+done
+
+# Get list of slave nodes
+SLAVES=`echo 'SELECT h.name FROM monitoringclusternodes AS m LEFT JOIN hosts AS h ON (m.host = h.id)'|mysql --skip-column-names -u$MSQLID -p$MSQLPW -S $MSQLSOCKET opsview`
+
+# Copy cache and config to the slave servers
+for i in $SLAVES; do
+        scp $CACHEPATH/.netapp-oidcache.* $i:$CACHEPATH/
+        scp $CACHEPATH/netapp-shares.map $i:$CACHEPATH/
+done
+
+# Always OK
+exit 0

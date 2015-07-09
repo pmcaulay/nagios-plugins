@@ -1,0 +1,196 @@
+Log file regular expression based parser plugin for Nagios.
+Version 3.11b, last updated 2014-09-04 by Peter Mc Aulay <pmcaulay@evilgeek.net>
+
+Direct download URLs:
+- Perl source: http://sourceforge.net/projects/pma-oss/files/nagios-plugins/check_log3.pl/download
+- Win32 standalone executable: http://sourceforge.net/projects/pma-oss/files/nagios-plugins/check_log3.exe/download
+
+Originally written by Aaron Bostick (abostick@mydoconline.com)
+Rewritten by Peter Mc Aulay and Tom Wuyts
+The --output-all feature was contributed by Ian Gibbs
+The --and feature was contributed by Wesley Moore
+  
+Released under the terms of the GNU General Public Licence v2.0
+
+Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log plugin this is modeled after.
+
+Tested on Linux, Windows, AIX and Solaris.
+
+Usage: check_log3.pl --help
+
+
+*** Description ***
+
+This plugin will scan arbitrary text files looking for regular expression matches.
+
+The search pattern can be any Perl regular expression.  It will be passed verbatim to the m/// operator (see "man perlop").  The search patterns can be read from a file, one per line; the lines will be concatenated into a single regexp of the form 'line1|line2|line3|...'.  If you specify the -p option multiple times, the patterns will be concatenated in the same manner.  You can use either -p or -P, but not both.  If you specify both, -P will take precedence.  If you specify the --and parameter the patterns will be ANDed instead of OR'ed, i.e. all patterns must appear on a line to count as a successful match (the order does not matter).
+
+An ignore (whitelist) pattern can be specified using the -n option, causing the plugin to ignore all lines matching it, even if they match the search pattern.  This is for badly behaved applications that produce lots of error messages when running "normally" (certain Java apps come to mind).  The list of ignore patterns can be read from a file, one regexp per line, like the -P option.  If you specify -n multiple times the patterns will be concatenated in the same manner.  You can use either -n or -f, but not both.  If both are specified, -f will take precedence.
+
+Pattern matching can be either case sensitive or case insensitive.  The -i option controls case sensitivity for both search and ignore patterns.
+
+A temporary file is used to store the seek byte position of the last scan.  Specifying this file is optional, if you don't specify a filename it will be auto-generated.  To read the entire file each run, use the null device (NUL on Win32, /dev/null on Unix) as the seek file.  If you specify a directory, the seek file will be written to that directory instead of in /tmp.
+
+To monitor files with a dynamic component in the filename, such as rotated or time stamped fike names, use -l to specify only the fixed part of the path and filename, and the -m option to specify the variable part, using a glob expression (see "man 7 glob").  If this combination pattern of -l and -m matches more than one file, you can use the -t option to further narrow down the selection to the most recently modified file, the first match (sorted alphabetically) or the last match (this is the default).  You can also use macro's similar to the Unix date(1) format string syntax, and you can use the --timestamp option to tell the script to look for files with timestamps in the past (the default is the current date).
+
+When using -m, do not specify a seek file; it will be ignored unless it is /dev/null or a directory.  Also note that glob patterns are not the same as regular expressions (please let me know if you want support for that).
+
+If the -l option points to a directory, -m '*' is assumed.
+
+The -w and -c options control the WARNING and CRITICAL state thresholds; if if none are provided, the plugin will return a WARNING state if at least one match was found (equivalent to "-w 1").
+
+If the thresholds are expressed as percentages, they are taken to mean the percentage of lines in the input that match (match / total * 100).  When using the -e or -E options, the percentage of matched lines that also match the parsing condition is taken, rather than the total number of lines in the input.
+
+You can only specify each threshold once (if you specify one multiple times the last one on the command line wins).  You can specify a percentage for one threshold and an absolute number for another.
+
+To invert the result of the pattern matching, use the "--negate" option.  This will return an alert if NOT at least X matches were found, with X being the value of the -w and/or -c thresholds.  If you specify a warning threshold higher than the critical threshold (and both > 0) then --negate will be assumed.  Explicitly specifying --negate will have no additional effect (you can't negate an implied negation, to avoid the urge of the next maintainer of your installation to hunt you down and beat you with a stick).
+
+Note that a bad regexp might case an infinite loop, so set a reasonable plugin time-out in Nagios.  This goes double if you use custom eval code.  This plugin will set an internal time-out alarm based on the $TIMEOUT setting found in utils.pm.  You can use the --timeout option to change this behaviour.
+
+It is also possible to raise a warning or critical alert if the log file was not written to since the last check, using -d or -D.  This can be used as a kind of "heartbeat" monitor.  You can use these options either by themselves or in combination with pattern matching.  This is useful only if you can guarantee that the frequency of log writes will always be higher than the service check interval.
+
+Optionally the plugin can execute a block of Perl code on each matched line, to further affect the output (using -e or -E).  The code should usually be enclosed in curly brackets (for performance if nothing else) and probably quoted.  This function allows for the performing of additional tests, output reformatting, data extraction and other processing (possibly of lines other than the current match, if you also use --context) of log file content.  You can use either -e or -E, but not both.  If you do, -E takes precedence.
+
+This custom code is executed as a Perl 'eval' block and the matched line is passed to it as $_.   (See "perldoc -f eval" for details).  You can modify $parse_out to save a custom string for this match (the default is the input line itself).  When using --context, you must modify @line_buffer instead of $parse_out.  You can also modify $perfdata to return custom performance data to Nagios (e.g. based on content extracted from the log file).  See the Nagios plugin development guidelines for the proper format of performance data metrics, as no validation is done by this plugin.
+
+If you want to parse every line in the log using the custom code, you must use -p to specify a search pattern that matches every line (e.g. -p '.*').
+
+Expected return codes of the eval block:
+
+- If the code returns non-zero, it is counted towards the alert threshold.
+- If the code returns 0, the line is not counted against the threshold.
+  (It's still counted as a match, but for informational purposes only.)
+
+Note: using custom eval code is an advanced feature and can potentially have unintended side effects.  The eval code has full access to the plugin's internal variables, so bugs in your code may lead to unpredictable plugin behaviour and incorrect monitoring results.  If you don't know at least a little Perl, do not attempt to use this feature.  Note that running arbitrary code, especially input from a remote host (from e.g. NRPE command line arguments) is NOT SECURE.
+
+
+*** Exit codes ***
+
+This plugin returns OK when a file is successfully scanned and no lines matching the search pattern(s) are found, or not enough to exceed the alerting thresholds.
+
+It returns WARNING or CRITICAL if any matches were found that are not also whitelisted; the -w and -c options determine how many lines must match before an alert is raised.  If an eval block is defined (via -e or -E) a line is only counted if it both matches the search pattern *and* the custom code returns a non-zero result for that line.
+
+By default, the plugin returns WARNING if at least one match was found.
+
+Note that it is not possible to generate WARNING alerts for one pattern and CRITICAL alerts for another in the same run.  If you want that, you need to define two service checks (using different seek files!) or use another plugin.
+
+The plugin returns WARNING if the -d option is used, and the log file hasn't grown since the last run.  Likewise, if -D is used, it will return CRITICAL instead.  Take care that the time between service checks is less than the minimum amount of time your application writes to the log file when you use these options.
+
+If the log file is missing (or the multiple file selection options don't return any matches) the plugin will return CRITICAL unless overridden by the --missing option.  You can specify a custom error message using the --missing-msg option.
+
+If the --ok option is used, the plugin will always return OK unless an error occurs and will ignore any thresholds.  This can be useful if you use this plugin only for its log parsing functionality, not for alerting (e.g. to just plot a graph of values extracted from the log file).  Specifying a zero value for both -w and -c has the same effect.
+
+The plugin always returns CRITICAL if an error occurs, such as if a file is not found (except when using --missing) or in case of a permissions problem or I/O error.
+
+
+*** Output ***
+
+The line of the last pattern matched is returned in the output along with the service state, the line and pattern count and the thresholds used (not if you used --no-header).  If you use the --quiet option the output will always be "No matches found" if the thresholds were not reached.
+
+Use the -a option to output all matching lines instead of just the last matching one.  Note that Nagios will only read the first 4 KB of data that a plugin returns, and that the NRPE daemon even has a 1KB output limit.
+
+The --report-first-only option will cause the plugin to output the first matching line instead of the last one.  This option is ignored if -a is also specified.  This is useful when you are mainly interested in when a problem first occurred, rather than the last occurrence.
+
+The --stop-first-match option will not only cause the plugin to report the first match, but also stop processing at that point, so that every single match is reported (eventually; one match gets reported per service check).  This option overrides -a.  Note that this means that such a service check may continue to report errors long after the original problem is solved.
+
+If you use both --report-first-only and --stop-first-match together, then --report-first-only takes precedence.
+
+Use the -C option to return some lines of context before and/or after the match, like "grep -C".  Prefix the number with - to return extra lines only before the matched line, with + to return extra lines only after the matched line, or with nothing to return extra lines both before and after the match.
+
+If you use -a and -C together, the plugin will output "---" between blocks of matched lines and their context.
+
+If custom Perl code is run on matched lines using -e, the number of matches for which the custom code returned true is also returned.  You may modify the output via $parse_out (for best results, do not produce output directly using 'print' or related functions).
+
+Note: lines returned as context are not parsed automatically with -e or -E, nor is context preserved if you modify $parse_out.  If you want to return custom output while also preserving context, modify @line_buffer instead to change the content of the read-back buffer.  You cannot modify lines after the match this way (but you can read ahead using the read_next function, if you must.  Try not to modify the LOG_FILE file handle directly).
+
+Use --debug to see what the plugin is doing behind the scenes.
+
+
+*** Performance data ***
+
+The number of matching lines is returned as performance data (label "lines").  If -e is used, the number of lines for which the eval code returned 1 is also returned (label "parsed").  The eval code can change the perfdata output by modifying the value of the $perfdata variable, e.g. for when you want to graph the actual figures appearing in the log file.  In that case the line and match counts are not returned.
+
+You can suppress the plugin's standard "lines" and "parsed" perfdata counters using the --no-perfdata option.
+
+
+*** Nagios service check configuration notes ***
+
+Please be aware of the following things when configuring service checks using this plugin:
+
+1. The maximum check attempts value for the service should always be 1, to
+   prevent Nagios from retrying the service check (the next time the check
+   is run it will not produce the same results).  Otherwise you will not
+   receive a notification for every match.
+
+2. The notification options for the service should be set to not notify you
+   of recoveries for the check.  Since pattern matches in the log file will
+   normally only be reported once, "recoveries" don't really apply.  (An
+   exception might be if you are reading the whole file each time.)
+
+3. If you have more than one service check reading the same log file, you
+   must explicitly supply a seek file name using the -s option.  If you use
+   the -s option explicitly you must always use a different seek file for
+   each service check.  Otherwise one service check may start reading where
+   another left off, which is likely not what you want (especially since
+   the order in which they are run by Nagios is unpredictable).
+
+Also note that many NRPE agents restrict the characters that they accept, which includes those commonly used in regular expressions.
+
+
+*** Character set support ***
+
+This plugin supports any character set and encodings your local system and Perl installation support.  However, the plugin does not itself care about or try to guess input file encodings, so if you're reading files with multi-byte or non-ASCII characters you will need to tell the plugin about it using the --input-enc option.  (UTF-8 is always handled correctly as it's the Perl native format.)
+
+On Windows systems in particular UTF-16 and Windows-1252 are common, so you may need to use "--input-enc=utf-16" or "input-enc=win-1252" to correctly find non-ASCII strings in such files.
+
+The plugin outputs UTF-8 by default, but you can change this using the --output-enc option.  You may need to do this if your service check output looks wrong in Nagios, e.g. "--output-enc=latin1".
+
+The --input-enc option affects the interpretation of log files and search pattern files, but not seek files or custom parsing scripts (for which it's either not necessary or which take care of their own internal encoding).
+
+Note that the encoding of the patterns passed from the command line by the shell (from Nagios, an NRPE agent, or by you while testing manually) must match the encoding specified by --input-enc.  You may have to use pattern files if this is not the case (such as parsing Windows UTF-16 files on a Linux system, whose shells normally uses UTF-8).
+
+Please note that the quality of Unicode support varies somewhat between Perl versions.  Use at least Perl 5.8.1 and preferably 5.14 or higher if you need these features.
+
+
+*** Examples ***
+
+Return WARNING if errors occur in the system log, but ignore the ones from the NRPE agent itself:
+
+  check_log3.pl -l /var/log/messages -p '[Ee]rror' -n nrpe
+
+Return WARNING if 10 or more logon failures have been logged since the last check, or CRITICAL if there are 50 or more:
+
+  check_log3.pl -l /var/log/auth.log -p 'Invalid user' -w 10 -c 50
+
+Return WARNING if half or more of all new lines logged contain errors, and CRITICAL if the application stops logging altogether:
+
+  check_log3.pl -l /var/log/heartbeat.log -p ERROR -w 50% -D
+
+Return WARNING if there are error messages in a rotated log file (so we're actually looking for /var/log/messages* and want the most recent one):
+
+  check_log3.pl -l /var/log/messages -m '*' -p Error -t most_recent
+
+Return WARNING if there are error messages in a log whose name contains a time stamp, so we're really reading access.YYMMDD.log:
+
+  check_log3.pl -l /data/logs/httpd/access -m '.%Y%m%d.log' -p Error
+
+Return CRITICAL if not at least one MARK was written to the syslog since the last check:
+
+  check_log3.pl -l /var/log/messages -p MARK --negate -c 1
+
+Return WARNING if there are lines containing any combination of the strings 'sudo', 'root' and 'baduser' in /var/log/messages, and list them all:
+
+  check_log3.pl -l /var/log/messages -p sudo -p root -p baduser --all -a
+
+Return WARNING and print a custom message if there are 50 or more lines in a CSV formatted log file where column 7 contains a value over 4000:
+
+  check_log3.pl -l processing.log -p ',' -w 50 -e 
+  '{
+      my @fields = split(/,/);
+      if ($fields[6] > 4000) {
+       $parse_out = "Processing time for $fields[0] exceeded: $fields[6]n";
+       return 1
+      }
+  }'
+
+Note: in nrpe.cfg this will all have to be put on one line.  It will be more readable if you put the parser code in a separate file and use -E.
