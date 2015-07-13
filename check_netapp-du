@@ -3,25 +3,25 @@
 # Nagios plugin to report disk space and number files in a NetApp file share
 # Copyright (c) 2009 Rob Hassing and Peter Mc Aulay
 #
-# Last updated 2015-01-23 by Peter Mc Aulay
+# Last updated 2015-07-13 by Peter Mc Aulay
 #
 
 use strict;
+use lib "/usr/lib/nagios/plugins"  ;
 use lib "/usr/local/nagios/libexec";
-use lib "/data/opsview/nagios/libexec"  ;
 use Getopt::Long qw(:config no_ignore_case);
 use utils qw(%ERRORS);
 
 # Path to manual CIFS to volume/qtree map file
-my $MAPFILE = "/data/scripts/nagios/netapp-shares.map";
+my $MAPFILE = "/usr/lib/nagios/plugins/netapp-shares.map";
 
 # Path to NetApp MIB table (get it from http://www.protocolsoftware.com/documents/mibs/netapp.mib.txt)
 my $MIBFILE = "/usr/share/snmp/mibs/NETWORK-APPLIANCE-MIB.txt";
 
 # Path to cache files
-my $CACHEPATH = "/data/scripts/nagios/tmp";
+my $CACHEPATH = "/tmp";
 # Filename prefix for cache files
-my $CACHEFILE = ".netapp-oidcache";
+my $CACHEFILE = "netapp-oidcache";
 
 # Default NetApp volume name prefix
 my $prefix = "/vol";
