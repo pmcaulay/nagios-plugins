@@ -9,7 +9,7 @@
 # The --and feature was contributed by Wesley Moore
 # Released under the terms of the GNU General Public Licence v2.0
 #
-# Last updated 2014-09-04 by Peter Mc Aulay <peter@zeron.be>
+# Last updated 2015-08-03 by Peter Mc Aulay <peter@zeron.be>
 #
 # Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log
 # plugin this is modeled after.
@@ -364,7 +364,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.11b';
+my $plugin_revision = '3.11c';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -485,6 +485,8 @@ if ($enc_out) {
 	# Safe default
 	binmode STDOUT, ":encoding(UTF-8)";
 }
+
+print "debug: check_log3.pl version $plugin_revision starting\n" if $debug;
 
 #
 # Parse input
