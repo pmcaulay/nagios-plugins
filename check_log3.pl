@@ -9,7 +9,7 @@
 # The --and feature was contributed by Wesley Moore
 # Released under the terms of the GNU General Public Licence v2.0
 #
-# Last updated 2015-08-03 by Peter Mc Aulay <peter@zeron.be>
+# Last updated 2015-10-01 by Peter Mc Aulay <peter@zeron.be>
 #
 # Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log
 # plugin this is modeled after.
@@ -103,7 +103,9 @@
 # kind of "heartbeat" monitor.  You can use these options either by themselves
 # or in combination with pattern matching.  This is useful only if you can
 # guarantee that the frequency of log writes will always be higher than the
-# service check interval.
+# service check interval.  If no search pattern was specified but only -d or
+# -D, the -w and -c options control the number of expected new lines before an
+# alert is triggered.  In that case the -D option is equivalent to '-d -c 1'.
 #
 # Optionally the plugin can execute a block of Perl code on each matched line,
 # to further affect the output (using -e or -E).  The code should usually be
@@ -161,7 +163,9 @@
 # grown since the last run.  Likewise, if -D is used, it will return CRITICAL
 # instead.  Take care that the time between service checks is less than the
 # minimum amount of time your application writes to the log file when you use
-# these options.
+# these options.  If you specify only these options and no search pattern,
+# you can use the -w and -c options to control how many new lines minimum
+# there should be in the log since the last check before returning an alert.
 #
 # If the log file is missing (or the multiple file selection options don't
 # return any matches) the plugin will return CRITICAL unless overridden by
@@ -364,7 +368,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.11c';
+my $plugin_revision = '3.11d';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -487,6 +491,7 @@ if ($enc_out) {
 }
 
 print "debug: check_log3.pl version $plugin_revision starting\n" if $debug;
+print "debug: warning=$warning, critical=$critical\n" if $debug;
 
 #
 # Parse input
@@ -558,7 +563,7 @@ if ($and) {
 } else {
 	$re_pattern = join('|', @patterns);
 }
-($re_pattern) || usage("Regular expression not specified.\n");
+($re_pattern) || usage("Regular expression not specified.\n") unless ($diff_warn || $diff_crit);
 print "debug: looking for '$re_pattern'\n" if $debug;
 
 # If we have an ignore/whitelist file, read it
@@ -765,7 +770,8 @@ if (open(SEEK_FILE, "$seek_file")) {
 		# then we just start from beginning i.e. the log was rotated.
 		print "debug: seek from $seek_pos[0] (eof = $size)\n" if $debug;
 
-		# If the file hasn't grown since last time and -d or -D was specified, stop here.
+		# If the file hasn't grown since last time and a nodiff option was specified, stop here.
+		$diff_crit = 1 if ($diff_warn && $critical);
 		if ($seek_pos[0] == $size && $diff_crit) {
 			print "CRITICAL: Log file not written to since last check\n";
 			exit $ERRORS{'CRITICAL'};
@@ -893,6 +899,21 @@ print "debug: found $pattern_count maches, total lines $total, parse count $pars
 # Count parse matches if applicable, or else just count the matches.
 #
 
+# If this was a nodiff check we just count the lines and stop
+if (!$re_pattern) {
+	if ($diff_crit && $total lt $critical) {
+		print "CRITICAL: Only $total lines written since last check (expected at least $critical)\n";
+		exit $ERRORS{'CRITICAL'};
+	} elsif ($diff_warn && $total lt $warning) {
+		print "WARNING: Only $total lines written since last check (expected at least $warning)\n";
+		exit $ERRORS{'WARNING'};
+	} elsif ($diff_warn or $diff_crit) {
+		print "OK: $total lines written since last check\n";
+		exit $ERRORS{'OK'};
+	}
+}
+
+# Pattern matching requires a little more work
 my $state = "UNKNOWN";
 my $endresult = $ERRORS{'UNKNOWN'};
 
@@ -1129,14 +1150,13 @@ sub print_usage () {
 	print "Usage: $prog_name [ -h | --help ]\n";
 	print "Usage: $prog_name [ -v | --version ]\n";
 	print "Usage: $prog_name [ -v | --list-encodings ]\n";
-	print "Usage: $prog_name -l log_file | log_directory [ -s seek_file | seek_base_dir ]
-	( [ -m glob-pattern ] [ -t most_recent|first_match|last_match ] [ --timestamp=time-spec ] )
-	-p pattern [ -p pattern ... ] | -P patternfile [ -n negpattern | -f negpatternfile ]
-	[ --input-enc=encoding ] [ --output-enc=encoding ] [ --crlf ]
-	[ --missing=STATE [ --missing-msg=message ] ]
-	[ --ok ] | ( [ -w warn_count ] [ -c crit_count ] [ --negate ] )
-	[ -i ]  [-d | -D ] [ -1 ] [ -a ] [ -C [-|+]n ] [ -q ] [ -Q ]
-	[ -e '{ eval block }' | -E script_file ]
+	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
+	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir]
+	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec])
+	[-d] [-D] [-1] [-a] [-C {-|+}n] [-q] [-Q] [-e '{ eval block }'|-E script_file]
+	[--ok]|([-w warn_count] [-c crit_count] [--negate])
+	[--input-enc=encoding] [--output-enc=encoding] [--crlf]
+	[--missing=STATE [--missing-msg=message]]
 \n";
 }
 
@@ -1236,10 +1256,14 @@ Alerting control:
 -c, --critical=<number>
     Return CRITICAL if at least this many matches found.  The default is 0,
     i.e. don't return critical alerts unless specified explicitly.
--d, --nodiff-warn
-    Return WARNING if the log file was not written to since the last scan.
+-d, --nodiff, --nodiff-warn
+    Return an alert if the log file was not written to since the last scan.
+    By default this will result in a WARNING if not at least one line was
+    written.  If no search pattern was specified, the -w and -c options can
+    be used to control the number of expected lines.
 -D, --nodiff-crit
-    Return CRITICAL if the log was not written to since the last scan.
+    Return CRITICAL if the log was not written to since the last scan.  If no
+    search pattern was specified this is equivalent to '-d -c 1'.
 --missing=STATE [ --missing-msg=\"message\" ]
     Return STATE instead of CRITICAL when no log file could be found, and
     optionally output a custom message (by default \"$missing_msg\").
