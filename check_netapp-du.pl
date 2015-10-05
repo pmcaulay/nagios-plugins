@@ -72,7 +72,7 @@ GetOptions(
 
 ($help) && print_help();
 ($version) && print_version();
-
+$debug && print("DEBUG: $PROGNAME $REVISION starting\n");
 #
 # Input validation
 #
