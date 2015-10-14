@@ -1,18 +1,24 @@
 #!/usr/bin/perl -w
 # nagios: -epn
 
+# Full documentation goes here
 =pod
 
-=head1 SYNOPSIS
+=head1 NAME
 
-check_log3.pl is a regular expression based log file parser plugin for Nagios and Nagios-like monitoring systems.
+check_log3.pl - a regular expression based log file parser plugin for Nagios and Nagios-like monitoring systems.
 
 Tested on Linux, Windows, AIX and Solaris.
+
+=head1 SYNOPSIS
 
 Usage:
 
   check_log3.pl --help
   perldoc check_log3.pl
+  check_log3.pl --manual
+
+See L<below|/EXAMPLES> for some examples.
 
 =head1 CREDITS
 
@@ -381,7 +387,6 @@ in a CSV formatted log file where column 7 contains a value over 4000:
 Note: in nrpe.cfg this will all have to be put on one line.  It will be more
 readable if you put the parser code in a separate file and use -E.
 
-
 =cut
 
 # Load modules
@@ -395,6 +400,7 @@ use utils qw($TIMEOUT %ERRORS &print_revision &support);
 use Getopt::Long qw(:config no_ignore_case);
 use File::Spec;
 use File::Glob ':glob';
+use Pod::Usage;
 
 # These are here so PAR-Packer's pp will compile them into the standalone Win32 EXE
 # (CJK modules not included for size reasons)
@@ -514,6 +520,7 @@ GetOptions (
 	"v|V|version"		=> \$version,
 	"h|help"		=> \$help,
 	"debug"			=> \$debug,
+	"manual"		=> sub { pod2usage(-exitval => $ERRORS{'OK'}, -verbose => 2) },
 );
 
 # Set output encoding before we output anything
@@ -1179,12 +1186,18 @@ sub read_next {
 	return $lines;
 }
 
+#
+# Documentation not in POD format (because we interpolate some variables)
+#
+
 # Short usage info
 sub print_usage () {
 	print "This is $prog_name version $plugin_revision\n\n";
 	print "Usage: $prog_name [ -h | --help ]\n";
 	print "Usage: $prog_name [ -v | --version ]\n";
+	print "Usage: $prog_name --manual\n";
 	print "Usage: $prog_name [ -v | --list-encodings ]\n";
+
 	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
 	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir]
 	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec])
@@ -1193,14 +1206,11 @@ sub print_usage () {
 	[--input-enc=encoding] [--output-enc=encoding] [--crlf]
 	[--missing=STATE [--missing-msg=message]]
 	
-Full manual: perldoc check_log3.pl
-
 \n";
 }
 
 # Long usage info
 sub print_help () {
-################################################################################
 	print_usage();
 	print "
 This plugin scans arbitrary text files for regular expression matches.
@@ -1365,6 +1375,11 @@ Output control:
     Equivalent to --timeout=0.
 
 Support information:
+
+-h, --help
+    This help screen.
+--manual
+    The full manual.
 
 Send email to pmcaulay\@evilgeek.net if you have questions regarding use of this
 software, or to submit patches or suggest improvements.  Please include version
