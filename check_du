@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# Simple disk usage check plugin for Nagios
+# Last updated 2016-02-16 by Peter Mc Aulay
+#
+
+DIR=$1
+WARN=$2
+CRIT=$3
+
+# Input validation
+if [ -z "$DIR" ]; then
+	echo "Usage: `basename $0` path"
+	exit 3
+fi
+
+# Sanity check
+if [ ! -d "$DIR" ]; then
+	echo "Cannot chdir to $DIR"
+	exit 3
+fi
+
+# Enumerate disk space usage
+DU=`du -smx $DIR|awk '{ print $1 }'`
+RES=3
+
+echo -n "$DIR size is $DU MB"
+
+# Test against thresholds, if any
+test -n "$WARN" && test $DU -gt $WARN && RES=1 && echo -n " (more than $WARN MB)"
+test -n "$CRIT" && test $DU -gt $CRIT && RES=2 && echo -n " (more than $CRIT MB)"
+test -n "$WARN" && test $DU -lt $WARN && RES=0
+test -z "$WARN" && RES=0
+
+# Append perfdata
+echo "| size=${DU}MB;$WARN;$CRIT"
+exit $RES
+
