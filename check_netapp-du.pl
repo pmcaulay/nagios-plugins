@@ -29,7 +29,7 @@ my $prefix = "/vol";
 ### Configuration ends ###
 
 my $PROGNAME = "check_netapp-du.pl";
-my $REVISION = "2.3a";
+my $REVISION = "2.3b";
 
 # Pre-declare functions
 sub usage;
@@ -72,7 +72,15 @@ GetOptions(
 
 ($help) && print_help();
 ($version) && print_version();
-$debug && print("DEBUG: $PROGNAME $REVISION starting\n");
+
+# Some debug output
+if ($debug) {
+	print "DEBUG: $PROGNAME $REVISION starting\n";
+	print "DEBUG: Using MIB definitions from $MIBFILE\n";
+	print "DEBUG: Using local map $MAPFILE\n";
+	print "DEBUG: Using cache path $CACHEPATH\n";
+}
+
 #
 # Input validation
 #
@@ -235,6 +243,8 @@ print "DEBUG: Final regexp pattern: $match\n" if $debug;
 open(FILE, $cache) or die "Failed to open file $cache: $!\n";
 while(my $line = <FILE>) {
 	my @fields;
+	# Strip duplicate quotes (added by some MIB versions)
+	$line =~ s/""/"/g;
 	#
 	# Is it a volume?
 	#
