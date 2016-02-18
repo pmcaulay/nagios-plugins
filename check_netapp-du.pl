@@ -3,7 +3,7 @@
 # Nagios plugin to report disk space and number files in a NetApp file share
 # Copyright (c) 2009 Rob Hassing and Peter Mc Aulay
 #
-# Last updated 2016-02-16 by Peter Mc Aulay
+# Last updated 2016-02-18 by Peter Mc Aulay
 #
 
 use strict;
@@ -29,7 +29,7 @@ my $prefix = "/vol";
 ### Configuration ends ###
 
 my $PROGNAME = "check_netapp-du.pl";
-my $REVISION = "2.3b";
+my $REVISION = "2.3c";
 
 # Pre-declare functions
 sub usage;
@@ -134,7 +134,7 @@ if (-f $cache && (stat(_))[7] != 0 && not $forcegencache) {
 	# One cache update at a time - though a lock held for more than an hour is considered stale
 	# Note: if retrieving the share inventory takes longer than the Nagios plugin time-out, the
 	# process will be killed - so you may want to pre-generate the caches via cron.
-	if (-f "$cache.lock" && (stat("$cache.lock"))[9] > (time - 3600)) {
+	if (-f "$cache.lock" && (stat("$cache.lock"))[9] gt (time - 3600)) {
 		print "Cache update in progress, please try again later\n";
 		exit $ERRORS{'UNKNOWN'};
 	} else {
@@ -214,7 +214,7 @@ unless ($exact) {
 		next if /^$/;
 		next if $_ eq $prefix;
 		$pathdepth++;
-		if ($pathdepth > 2) {
+		if ($pathdepth gt 2) {
 			print "DEBUG: path too deep: $_\n" if $debug;
 			$match =~ s/\/$_.*//g;
 			next;
@@ -382,10 +382,10 @@ $dfMaxFilesAvail = $stats[5];
 # From https://communities.netapp.com/thread/1305:
 # if (Low >= 0) x = High * 2^32 + Low
 # if (Low < 0)  x = (High + 1) * 2^32 + Low
-$dfKBytesUsed = ($dfHighKBytesUsed * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed >= 0;
-$dfKBytesUsed = (($dfHighKBytesUsed + 1) * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed < 0;
-$dfKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
-$dfKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
+$dfKBytesUsed = ($dfHighKBytesUsed * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed ge 0;
+$dfKBytesUsed = (($dfHighKBytesUsed + 1) * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed lt 0;
+$dfKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes ge 0;
+$dfKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes lt 0;
 
 # Check that the QTrees has valid quota defined, otherwise use the parent volume for max size and file limit values
 my $hasQuota = 1;
@@ -445,10 +445,10 @@ if ($ShareType eq "QTree") {
 	$RealLowKBytesUsed = $stats[4];
 
 	# Calculate totals
-	$RealKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
-	$RealKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32  + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
-	$RealKBytesUsed = ($RealHighKBytesUsed * 2**32 + $RealLowKBytesUsed) if $RealLowKBytesUsed >= 0;
-	$RealKBytesUsed = (($RealHighKBytesUsed +1) * 2**32  + $RealLowKBytesUsed) if $RealLowKBytesUsed < 0;
+	$RealKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes ge 0;
+	$RealKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32  + $dfLowTotalKBytes) if $dfLowTotalKBytes lt 0;
+	$RealKBytesUsed = ($RealHighKBytesUsed * 2**32 + $RealLowKBytesUsed) if $RealLowKBytesUsed ge 0;
+	$RealKBytesUsed = (($RealHighKBytesUsed +1) * 2**32  + $RealLowKBytesUsed) if $RealLowKBytesUsed lt 0;
 
 	$RealKBFree = $RealKBytesTotal - $RealKBytesUsed;
 
@@ -495,26 +495,26 @@ my $status;
 my $rc;
 
 # Catch "Qtree's underlying volume full" condition
-if ($RealKBFree && $RealKBFree >= 0) {
+if ($RealKBFree && $RealKBFree le 0) {
 	$status = "CRITICAL - VOLUME FULL";
 	$rc = $ERRORS{'CRITICAL'};
 # Disk space critical
-} elsif ($critical && $dfPctUsed > $critical) {
+} elsif ($critical && $dfPctUsed lt $critical) {
 	$status = "CRITICAL";
 	$rc = $ERRORS{'CRITICAL'};
 
 # Disk space warning
-} elsif ($warning && $dfPctUsed > $warning) {
+} elsif ($warning && $dfPctUsed lt $warning) {
 	$status = "WARNING";
 	$rc = $ERRORS{'WARNING'};
 
 # Files critical
-} elsif ($files_crit && $dfFilesUsed > $files_crit) {
+} elsif ($files_crit && $dfFilesUsed lt $files_crit) {
 	$status = "FILES CRITICAL";
 	$rc = $ERRORS{'CRITICAL'};
 
 # Files warning
-} elsif ($files_warn && $dfFilesUsed > $files_warn) {
+} elsif ($files_warn && $dfFilesUsed lt $files_warn) {
 	$status = "FILES WARNING";
 	$rc = $ERRORS{'WARNING'};
 
