@@ -408,6 +408,8 @@ if ($ShareType eq "QTree") {
 	open(FILE, $cache) or die "Failed to open file $cache: $!\n";
 	while(my $line = <FILE>) {
 		my @fields;
+		# Strip duplicate quotes (added by some MIB versions)
+		$line =~ s/""/"/g;
 		if ($line =~ m{Volume:.*:"/$prefix/$qvStateName/"}i) {
 			@fields = split(/:/, $line);
 			$nr = $fields[1];
