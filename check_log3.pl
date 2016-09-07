@@ -68,7 +68,7 @@ on Win32, /dev/null on Unix) as the seek file.  If you specify a directory,
 the seek file will be written to that directory instead of in /tmp.
 
 To monitor files with a dynamic component in the filename, such as rotated
-or time stamped fike names, use -l to specify only the fixed part of the
+or time stamped file names, use -l to specify only the fixed part of the
 path and filename, and the -m option to specify the variable part, using a
 glob expression (see B<man 7 glob>).  If this combination pattern of -l and
 -m matches more than one file, you can use the -t option to further narrow
