@@ -1,0 +1,115 @@
+#!/bin/sh
+#
+# Nagios plugin to measure a Linux system's VMM page scan rate, specifically:
+# the ratio of pages reclaimed from the page/buffer cache vs the number of
+# page scans performed.  This gives an indication of memory pressure even
+# before the system starts to swap.
+#
+# Note, this plugin does not measure swap activity, but it will return a
+# WARNING state if the page scan rate is zero due to swap activity (i.e. the
+# ratio is zero because there are no free pages left).
+#
+# Last updated 2016-09-27 by Peter Mc Aulay
+
+# Nagios plugin return codes
+OK=0
+WARN=1
+CRIT=2
+UNKN=3
+
+# Where we store the results for each run so we can compare the numbers between each run
+CACHE=/tmp/check_pagescans.txt
+
+# Command line help
+usage() {
+	echo "Usage: $(basename $0) -w warn% -c crit%"
+	exit $UNKN
+}
+
+# Get input
+OPTIONS=`getopt -o w:c:h -l debug -- "$@"`
+if [ $? -ne 0 ]; then
+	usage
+fi
+
+DEBUG=false
+eval set -- "$OPTIONS"
+while true; do
+	case "$1" in
+		-w) shift; WARNING=$1; shift;;
+		-c) shift; CRITICAL=$1; shift;;
+		-h) usage;;
+		--debug) shift; DEBUG=true;;
+		--) shift; break;;
+	esac
+done
+
+# Both thresholds are mandatory
+test -z $WARNING && usage
+test -z $CRITICAL && usage
+
+# Initialise counters
+PREV_PGSTEAL=0
+PREV_PGSCAN=0
+
+# Get statistics from previous run
+if [ -f "$CACHE" -a /proc -ot "$CACHE" ]; then
+	PREV_PGSTEAL=$(grep ^pgsteal "$CACHE"|cut -d= -f2|sed -e 's/[^0-9]//g')
+	PREV_PGSCAN=$(grep ^pgscan "$CACHE"|cut -d= -f2|sed -e 's/[^0-9]//g')
+else
+	# But not if we have rebooted since then, as that resets /proc/vmstat
+	rm -f "$CACHE"
+fi
+
+# Get current statistics
+PGSTEAL=$(grep ^pgsteal /proc/vmstat|cut -d' ' -f2|paste -sd+ -|bc 2>/dev/null)
+PGSCAN=$(grep ^pgscan /proc/vmstat|cut -d' ' -f2|paste -sd+ -|bc 2>/dev/null)
+
+# Save current statistics for next time
+echo "# $(basename $0) statistics for $(date)" >$CACHE
+echo "pgsteal=$PGSTEAL" >>$CACHE
+echo "pgscan=$PGSCAN" >>$CACHE
+
+# Get differences since last check
+PGSTEAL=$((PGSTEAL - PREV_PGSTEAL))
+PGSCAN=$((PGSCAN - PREV_PGSCAN))
+
+# Debug info
+$DEBUG && echo "previous pgsteal=$PREV_PGSTEAL"
+$DEBUG && echo "previous pgscan=$PREV_PGSCAN"
+$DEBUG && echo "current pgsteal=$PGSTEAL"
+$DEBUG && echo "current pgscan=$PGSCAN"
+
+# Handle edge cases
+if [ $PGSCAN -eq 0 -a $PGSTEAL -eq 0 ]; then
+	echo "Page scan rate zero: no VMM activity|scanrate=0%;$WARNING;$CRITICAL"
+	exit $OK
+elif [ $PGSCAN -eq 0 ]; then
+	echo "Page scan rate undefined: no page scans since last run|scanrate=0%;$WARNING;$CRITICAL"
+	exit $OK
+elif [ $PGSTEAL -eq 0 ]; then
+	echo "Page scan rate zero: out of free pages, we are swapping|scanrate=0%;$WARNING;$CRITICAL"
+	exit $WARN
+fi
+
+# Calculate page steal vs page scan ratio
+# Avoid rounding down prematurely
+SCANRATE=$((PGSTEAL*100 / PGSCAN*100 / 100))
+
+# Maybe we simply have all the memory we need
+if [ $SCANRATE -eq 0 ]; then
+	echo "Page scan rate zero: no pressure on VMM system|scanrate=$SCANRATE%;$WARNING;$CRITICAL"
+	exit $OK
+fi
+
+# Output and return
+echo "Page scan rate: $SCANRATE% of page allocations could be satisfied from cache|scanrate=$SCANRATE%;$WARNING;$CRITICAL"
+
+if [ $SCANRATE -le $WARNING ]; then
+	exit $WARN
+elif [ $SCANRATE -le $CRITICAL ]; then
+	exit $CRIT
+else
+	exit $OK
+fi
+
