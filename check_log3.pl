@@ -26,18 +26,21 @@ Originally written by Aaron Bostick (abostick@mydoconline.com)
 Rewritten by Peter Mc Aulay and Tom Wuyts
 The --output-all feature was contributed by Ian Gibbs 
 The --and feature was contributed by Wesley Moore
+The --report-only feature was contributed by Andy Speagle
+
 Released under the terms of the GNU General Public Licence v2.0
 
-Last updated 2015-10-01 by Peter Mc Aulay <peter@zeron.be>
+Last updated 2016-09-27 by Peter Mc Aulay <peter@zeron.be>
 
 Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log
 plugin this is modeled after.
-
 
 =head1 DESCRIPTION
 
 This plugin will scan arbitrary text files looking for regular expression
 matches.
+
+=head2 Specifying filters
 
 The search pattern can be any Perl regular expression.  It will be passed
 verbatim to the B<m///> operator (see B<man perlop>).  The search patterns can
@@ -61,11 +64,15 @@ specified, -f will take precedence.
 Pattern matching can be either case sensitive or case insensitive.  The -i
 option controls case sensitivity for both search and ignore patterns.
 
+=head2 Seek position
+
 A temporary file is used to store the seek byte position of the last scan.
 Specifying this file is optional, if you don't specify a filename it will be
 auto-generated.  To read the entire file each run, use the null device (NUL
 on Win32, /dev/null on Unix) as the seek file.  If you specify a directory,
 the seek file will be written to that directory instead of in /tmp.
+
+=head2 Selecting among multiple files
 
 To monitor files with a dynamic component in the filename, such as rotated
 or time stamped file names, use -l to specify only the fixed part of the
@@ -83,6 +90,12 @@ When using -m, do not specify a seek file; it will be ignored unless it is
 regular expressions (please let me know if you want support for that).
 
 If the -l option points to a directory, B<-m '*'> is assumed.
+
+To show the actual filename of the log file being read, use --show-filename.
+
+It is not currently possible to use multiple files as input to a single run.
+
+=head2 Alerting thresholds
 
 The -w and -c options control the WARNING and CRITICAL state thresholds; if
 if none are provided, the plugin will return a WARNING state if at least one
@@ -106,21 +119,27 @@ will be assumed.  Explicitly specifying --negate will have no additional
 effect (you can't negate an implied negation, to avoid the urge of the next
 maintainer of your installation to hunt you down and beat you with a stick).
 
-Note that a bad regexp might case an infinite loop, so set a reasonable
-plugin time-out in Nagios.  This goes double if you use custom eval code.
+=head2 Plugin time-out
 
 This plugin will set an internal time-out alarm based on the $TIMEOUT
 setting found in utils.pm.  You can use the --timeout option to change this
 behaviour.
 
+Note that a bad regexp might case an infinite loop, so set a reasonable
+plugin time-out in Nagios.  This goes double if you use custom eval code.
+
+=head2 Heart beat monitoring
+
 It is also possible to raise a warning or critical alert if the log file was
 not written to since the last check, using -d or -D.  This can be used as a
-kind of "heartbeat" monitor.  You can use these options either by themselves
+kind of "heart beat" monitor.  You can use these options either by themselves
 or in combination with pattern matching.  This is useful only if you can
 guarantee that the frequency of log writes will always be higher than the
 service check interval.  If no search pattern was specified but only -d or
 -D, the -w and -c options control the number of expected new lines before an
 alert is triggered.  In that case the -D option is equivalent to B<-d -c 1>.
+
+=head2 Custom output processing
 
 Optionally the plugin can execute a block of Perl code on each matched line,
 to further affect the output (using -e or -E).  The code should usually be
@@ -162,8 +181,19 @@ internal variables, so bugs in your code may lead to unpredictable plugin
 behaviour and incorrect monitoring results.  If you don't know at least a
 little Perl, do not attempt to use this feature.
 
+B<Executing custom Perl code remotely is UNSAFE!>  Also, the NRPE agent will
+choke on the majority of Perl special characters.  It is therefore strongly
+recommended to only use custom eval code in scripts, not directly, and to
+make sure these scripts are at least as secure as the rest of your NRPE
+agent configuration (i.e. not writable to other users).
+
+Use the --secure option to disable custom eval processing entirely.  This
+option will cause the plugin to ignore the -e and -E options.
+
 
 =head1 EXIT CODES
+
+=head2 Based on matching lines
 
 This plugin returns OK when a file is successfully scanned and no lines
 matching the search pattern(s) are found, or not enough to exceed the
@@ -182,6 +212,8 @@ CRITICAL alerts for another in the same run.  If you want that, you need to
 define two service checks (using different seek files!) or use another
 plugin.
 
+=head2 Based on heart beat
+
 The plugin returns WARNING if the -d option is used, and the log file hasn't
 grown since the last run.  Likewise, if -D is used, it will return CRITICAL
 instead.  Take care that the time between service checks is less than the
@@ -190,16 +222,22 @@ these options.  If you specify only these options and no search pattern,
 you can use the -w and -c options to control how many new lines minimum
 there should be in the log since the last check before returning an alert.
 
+=head2 Missing log files
+
 If the log file is missing (or the multiple file selection options don't
 return any matches) the plugin will return CRITICAL unless overridden by
 the --missing option.  You can specify a custom error message using the
 --missing-msg option.
+
+=head3 Overriding alert states
 
 If the --ok option is used, the plugin will always return OK unless an error
 occurs and will ignore any thresholds.  This can be useful if you use this
 plugin only for its log parsing functionality, not for alerting (e.g. to
 just plot a graph of values extracted from the log file).  Specifying a zero
 value for both -w and -c has the same effect.
+
+=head3 Other problems
 
 The plugin always returns CRITICAL if an error occurs, such as if a file
 is not found (except when using --missing) or in case of a permissions
@@ -213,23 +251,46 @@ the service state, the line and pattern count and the thresholds used (not
 if you used --no-header).  If you use the --quiet option the output will
 always be "No matches found" if the thresholds were not reached.
 
+=head2 Controlling the amount of output
+
 Use the -a option to output all matching lines instead of just the last
 matching one.  Note that Nagios will only read the first 4 KB of data that
 a plugin returns, and that the NRPE daemon even has a 1KB output limit.
 
+Use the -N or --report-max option to specify a maximum number of matching
+lines to output at a time.  When the maximum number is reached, processing
+stops.  Same notes about plugin and NRPE daemon limits apply as above.
+
+The --stop-first-match option will cause the plugin to report the first match
+and stop processing at that point, so that every single match is reported
+(eventually; one match gets reported per service check).  This is equivalent
+to --report-max=1.
+
+Note that this means that the --report-max and --stop-first-match options may
+cause a service check to continue to report errors long after the original
+problem is solved, as it catches up on each matching log entry.
+
+The --report-only option can also be used to limit the output to a maximum
+number of matching lines, but it also skips the rest of the file.
+
 The --report-first-only option will cause the plugin to output the first
-matching line instead of the last one.  This option is ignored if -a is
-also specified.  This is useful when you are mainly interested in when a
-problem first occurred, rather than the last occurrence.
+matching line instead of the last one.  This is useful when you are mainly
+interested in when a problem first occurred, rather than the last occurrence,
+and is equivalent to using --report-only=1.
 
-The --stop-first-match option will not only cause the plugin to report the
-first match, but also stop processing at that point, so that every single
-match is reported (eventually; one match gets reported per service check).
-This option overrides -a.  Note that this means that such a service check
-may continue to report errors long after the original problem is solved.
+The --report-only and --report-first-only options will not cause a service
+check alert "lag", but they are not guaranteed to return all matching lines
+in the log file.
 
-If you use both --report-first-only and --stop-first-match together, then
---report-first-only takes precedence.
+Using -a together with the --report-max or --report-only options will override
+their output limiting behaviour, but not their stopping conditions, i.e. -a
+will completely negate --report-only but with --report-max processing will
+still stop after the --report-max number of matches.
+
+Similarly, if you use both --report-max and --report-only together, then the
+--report-only option takes precedence.
+
+=head2 Context
 
 Use the -C option to return some lines of context before and/or after the
 match, like "grep -C".  Prefix the number with - to return extra lines only
@@ -238,6 +299,8 @@ line, or with nothing to return extra lines both before and after the match.
 
 If you use -a and -C together, the plugin will output "---" between blocks
 of matched lines and their context.
+
+=head2 Custom output processing
 
 If custom Perl code is run on matched lines using -e, the number of matches
 for which the custom code returned true is also returned.  You may modify
@@ -262,6 +325,8 @@ also returned (label "parsed").  The eval code can change the perfdata output
 by modifying the value of the $perfdata variable, e.g. for when you want to
 graph the actual figures appearing in the log file.  In that case the line
 and match counts are not returned.
+
+=head2 Suppressing performance data
 
 You can suppress the plugin's standard "lines" and "parsed" perfdata counters
 using the --no-perfdata option.
@@ -392,8 +457,8 @@ readable if you put the parser code in a separate file and use -E.
 # Load modules
 require 5.004;
 use strict;
-use lib "/usr/lib/nagios/plugins";    # Debian
-use lib "/usr/lib64/nagios/plugins";  # 64 bit
+use lib "/usr/lib/nagios/plugins";    # Debian, SLES, 32 bit RedHat
+use lib "/usr/lib64/nagios/plugins";  # 64 bit RedHat
 use lib "/usr/local/libexec/nagios";  # (Free)BSD
 use lib "/usr/local/nagios/libexec";  # Other
 use utils qw($TIMEOUT %ERRORS &print_revision &support);
@@ -409,7 +474,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.11d';
+my $plugin_revision = '3.12';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -451,6 +516,10 @@ my $output_all = 0;
 my $total = 0;
 my $stop_first_match;
 my $report_first_only;
+my $match_count = undef;
+my $skip_eof_when_done = undef;
+my $report_max = undef;
+my $report_only = undef;
 my $always_ok;
 my $missing;
 my $missing_ok;
@@ -476,6 +545,8 @@ my $enc_in;
 my $enc_out;
 my $list_enc;
 my $crlf;
+my $show_filename = undef;
+my $secure = undef;
 
 # If invoked with a path, strip the path from our name
 my ($prog_vol, $prog_dir, $prog_name) = File::Spec->splitpath($0);
@@ -499,6 +570,8 @@ GetOptions (
 	"E|parsefile=s"		=> \$parse_file,
 	"a|output-all"		=> \$output_all,
 	"C|context=s"		=> \$context,
+	"N|report-max=i"	=> \$report_max,
+	"report-only=i"		=> \$report_only,
 	"1|stop-first-match"	=> \$stop_first_match,
 	"report-first-only"	=> \$report_first_only,
 	"negate"		=> \$negate,
@@ -512,7 +585,9 @@ GetOptions (
 	"q|quiet"		=> \$quiet,
 	"Q|no-header"		=> \$noheader,
 	"no-perfdata"		=> \$noperfdata,
+	"secure"		=> \$secure,
 	"A|and"			=> \$and,
+	"show-filename"		=> \$show_filename,
 	"input-enc|encoding=s"	=> \$enc_in,
 	"output-enc=s"		=> \$enc_out,
 	"list-encodings"	=> \$list_enc,
@@ -562,6 +637,24 @@ unless ($timeout) {
 	alarm($timeout);
 }
 print "debug: plugin timeout set to $timeout seconds\n" if $debug;
+
+# Suppress custom eval code when using --secure
+($secure) && print "debug: secure mode, not loading any external code\n" if $debug;
+($secure) && undef $parse_pattern;
+($secure) && undef $parse_file;
+
+# Set output limits and stopping conditions
+$match_count = $report_max if $report_max;
+$match_count = $report_only if $report_only;
+$skip_eof_when_done = 1 if $report_only;
+
+# Legacy options
+$match_count = 1 if $stop_first_match;
+$match_count = 1 if $report_first_only;
+$skip_eof_when_done = 1 if $report_first_only;
+
+print "debug: limit output to $match_count matches\n" if $debug;
+print "debug: skipping to EOF after $match_count matches\n" if ($debug && $skip_eof_when_done);
 
 # Determine line buffer characteristics
 if ($context && $context =~ /\+(\d+)/) {
@@ -874,7 +967,7 @@ while (<LOG_FILE>) {
 			$pattern_count += 1;
 
 			# Save the line matched and optionally some lines of context before and/or after
-			if ($output_all) {
+			if ($output_all or ($match_count && ($pattern_count <= $match_count))) {
 				$pattern_line .= join('', @line_buffer) if $read_back;
 				$pattern_line .= "($pattern_count) $line" if not $read_back;
 				$pattern_line .= read_next(*LOG_FILE, $read_ahead) if $read_ahead;
@@ -895,14 +988,14 @@ while (<LOG_FILE>) {
 					# If the eval block set $parse_out, save that instead
 					# Note: in this case we don't save any context
 					if ($parse_out) {
-						if ($output_all) {
+						if ($output_all or ($match_count && ($pattern_count <= $match_count))) {
 							$parse_line .= "($parse_count) $parse_out";
 						} else {
 							$parse_line = $parse_out;
 						}
 					# Otherwise save the current line as before
 					} else {
-						if ($output_all) {
+						if ($output_all or ($match_count && ($pattern_count <= $match_count))) {
 							$parse_line .= join('', @line_buffer) if $read_back;
 							$parse_line .= "($parse_count) $line" if not $read_back;
 							$parse_line .= read_next(*LOG_FILE, $read_ahead) if $read_ahead;
@@ -917,13 +1010,13 @@ while (<LOG_FILE>) {
 			}
 		}
 		# Stop here?
-		last if $stop_first_match or $report_first_only;
+		last if $pattern_count eq $match_count;
 	}
 }
 
 # Overwrite log seek file and print the byte position we have seeked to.
 open(SEEK_FILE, ">$seek_file") || ioerror("Unable to open '$seek_file' for writing: $!");
-if ($report_first_only) {
+if ($skip_eof_when_done) {
 	# Ignore rest of file up to EOF
 	print SEEK_FILE $size;
 } else {
@@ -1106,6 +1199,7 @@ print "Found $pattern_count lines (limit=$warning/$critical): " unless $noheader
 # Context is not saved if $parse_out was set (or nothing was found, obviously)
 print "\n" if ($context and not ($parse_out || $endresult == $ERRORS{'OK'}));
 print "$output";
+print " [$log_file]" if $show_filename;
 print "|$perfdata" if $perfdata;
 print "\n";
 
@@ -1199,13 +1293,14 @@ sub print_usage () {
 	print "Usage: $prog_name [ -v | --list-encodings ]\n";
 
 	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
-	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir]
+	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir] [--show-filename]
 	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec])
-	[-d] [-D] [-1] [-a] [-C {-|+}n] [-q] [-Q] [-e '{ eval block }'|-E script_file]
+	[-d] [-D] [-a] [-C {-|+}n] [-q] [-Q] ([-e '{ eval block }'|-E script_file]|--secure)
+	([-N|--report-max=N]|[--report-only=N])|([-1|--stop-first-match]|[--report-first-match])
 	[--ok]|([-w warn_count] [-c crit_count] [--negate])
 	[--input-enc=encoding] [--output-enc=encoding] [--crlf]
 	[--missing=STATE [--missing-msg=message]]
-	
+
 \n";
 }
 
@@ -1255,6 +1350,8 @@ Log file control:
     'yesterday' are also recognised.  The default is 'now'.
     If this expression is purely numerical it will be interpreted as seconds
     since 1970-01-01 00:00:00 UTC.
+--show-filename
+    Print the name of the actual input file in the plugin output.
 
 Search pattern control:
 
@@ -1329,19 +1426,25 @@ Alerting control:
 
 Output control:
 
+-N, --report-max=<number>
+    Stop after matching a maximum of <number> times.
+--report-only=<number>
+    Output a maximum of <number> lines and skip the rest (move the seek pointer
+    to the end of the file).  Takes precedence over --report-max.
 -1, --stop-first-match
     Stop at the first line matched, instead of the last one.  It will make the
     plugin report every single match (and implies an alerting threshold of 1).
+    Equivalent to --report-max=1.
 --report-first-only
-    Stop at the first line matched, but also skip the remainder of the file
-    (by moving the seek pointer to the end of the log file, as determined at
-    the moment it was opened for reading).  Use this option only when you are
-    expecting many identical (or very similar) matches but only want to see
-    the first one, and to ignore all subsequent matches until the next service
-    check.  (Note, this option takes precedence over --stop-first-match.)
+    Stop at the first line matched, but also skip the remainder of the file.
+    Use this option only when you are expecting many identical (or very similar)
+    matches but only want to see the first one, and to ignore all subsequent
+    matches until the next service check.  Equivalent to --report-only=1.
 -a, --output-all
     Output all matching lines instead of just the last one.  Note that the
     plugin output may be truncated if it exceeds 4KB (1KB when using NRPE).
+    If used together with --report-max or --report-only, will affect output
+    but not stopping/EOF seeking behaviour.
 -C, --context=[-|+]<number>
     Output <number> lines of context before or after matched line; use -N for
     N lines before the match, +N for N lines after the match (if possible) or
@@ -1361,6 +1464,8 @@ Output control:
     but you can parse it, and indeed you must use -C if you want to parse a
     line other than the current matching one.  In that case you should parse
     \@line_buffer instead of \$_.
+--secure
+    Disable all custom eval code features.  Overrides the -e and -E options.
 -q, --quiet
     Suppress output of matched line(s) if state is OK.
 -Q, --no-header
