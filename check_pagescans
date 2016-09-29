@@ -105,10 +105,10 @@ fi
 # Output and return
 echo "Page scan rate: $SCANRATE% of page allocations could be satisfied from cache|scanrate=$SCANRATE%;$WARNING;$CRITICAL"
 
-if [ $SCANRATE -le $WARNING ]; then
-	exit $WARN
-elif [ $SCANRATE -le $CRITICAL ]; then
+if [ $SCANRATE -le $CRITICAL ]; then
 	exit $CRIT
+elif [ $SCANRATE -le $WARNING ]; then
+	exit $WARN
 else
 	exit $OK
 fi
