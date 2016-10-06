@@ -290,6 +290,9 @@ still stop after the --report-max number of matches.
 Similarly, if you use both --report-max and --report-only together, then the
 --report-only option takes precedence.
 
+Note that if your warning or critical thresholds are higher than the value of
+--report-max or --report-only, those thresholds will never be reached.
+
 =head2 Context
 
 Use the -C option to return some lines of context before and/or after the
@@ -497,6 +500,7 @@ my @logfiles;
 my $seek_file = '';
 my $warning = '1';
 my $critical = '0';
+my $max = undef;
 my $diff_warn = '';
 my $diff_crit = '';
 my @patterns;
@@ -817,7 +821,7 @@ if (@logfiles) {
 	}
 
 	# Refine further with -t if there is more than one match
-	if (scalar(@logfiles) gt 1) {
+	if (scalar(@logfiles) > 1) {
 		if ($debug) {
 			print "debug: found " . scalar(@logfiles) . " files matching selection:\n";
 			foreach (@logfiles) {
@@ -1010,7 +1014,7 @@ while (<LOG_FILE>) {
 			}
 		}
 		# Stop here?
-		last if $pattern_count eq $match_count;
+		last if $match_count && $pattern_count == $match_count;
 	}
 }
 
@@ -1036,10 +1040,10 @@ print "debug: found $pattern_count maches, total lines $total, parse count $pars
 
 # If this was a nodiff check we just count the lines and stop
 if (!$re_pattern) {
-	if ($diff_crit && $total lt $critical) {
+	if ($diff_crit && $total < $critical) {
 		print "CRITICAL: Only $total lines written since last check (expected at least $critical)\n";
 		exit $ERRORS{'CRITICAL'};
-	} elsif ($diff_warn && $total lt $warning) {
+	} elsif ($diff_warn && $total < $warning) {
 		print "WARNING: Only $total lines written since last check (expected at least $warning)\n";
 		exit $ERRORS{'WARNING'};
 	} elsif ($diff_warn or $diff_crit) {
@@ -1191,11 +1195,16 @@ if ($endresult == $ERRORS{'CRITICAL'}) {
 $warning .= '%' if $warnpct;
 $critical .= '%' if $critpct;
 
+# Warn if match limiting was enabled, to avoid confusing output
+if ($match_count) {
+	$max = "/max $match_count";
+}
+
 # Filter any pipes from the output, as that is the Nagios output/perfdata separator
 $output =~ s/\|/\!/g;
 chomp($output);
 print "$state: " unless $noheader;
-print "Found $pattern_count lines (limit=$warning/$critical): " unless $noheader;
+print "Found $pattern_count lines (limit=$warning/$critical$max): " unless $noheader;
 # Context is not saved if $parse_out was set (or nothing was found, obviously)
 print "\n" if ($context and not ($parse_out || $endresult == $ERRORS{'OK'}));
 print "$output";
