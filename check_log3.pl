@@ -30,7 +30,7 @@ The --report-only feature was contributed by Andy Speagle
 
 Released under the terms of the GNU General Public Licence v2.0
 
-Last updated 2016-09-27 by Peter Mc Aulay <peter@zeron.be>
+Last updated 2016-10-06 by Peter Mc Aulay <peter@zeron.be>
 
 Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log
 plugin this is modeled after.
