@@ -500,7 +500,7 @@ my @logfiles;
 my $seek_file = '';
 my $warning = '1';
 my $critical = '0';
-my $max = undef;
+my $max = '',
 my $diff_warn = '';
 my $diff_crit = '';
 my @patterns;
