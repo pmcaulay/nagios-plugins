@@ -125,7 +125,21 @@ chomp(@result);
 my $productVersion = $result[0] =~ /NetApp Release (.*?):/;
 
 # Select which set of SNMP OIDs to use
-if ($productVersion =~ /^8\./) {
+#
+# ONTAP 7.x or 8.x in "7-Mode"
+if ($productVersion =~ /^7\./ or $productVersion =~ /7-Mode/) {
+	# Get size and usage
+	$oid_get_qtree_stats="789.1.4.6.1.{4,5,7,8,9,11}";
+	$oid_get_volume_stats="789.1.5.4.1.{16,17,14,15,12,11}";
+	# Look up parent volume OID
+	$oid_get_parent_volume_oid="789.1.4.6.1.13";
+	# Look up parent volume name
+	$oid_get_volume_name="789.1.4.4.1.2";
+	# Just the sizes
+	$oid_get_parent_volume_stats="789.1.5.4.1.{14,15,11,16,17}";
+
+# ONTAP 8.x C-Mode filers use different OIDs
+} elsif ($productVersion =~ /^8\./) {
 	# Get size and usage
 	$oid_get_qtree_stats="789.1.4.6.1.{25,26,9,11}";
 	$oid_get_volume_stats="789.1.5.4.1.{30,29,12,11}";
@@ -136,16 +150,6 @@ if ($productVersion =~ /^8\./) {
 	# Just the sizes
 	$oid_get_parent_volume_stats="789.1.5.4.1.{29,11,30}";
 
-} elsif ($productVersion =~ /^7\./) {
-	# Get size and usage
-	$oid_get_qtree_stats="789.1.4.6.1.{4,5,7,8,9,11}";
-	$oid_get_volume_stats="789.1.5.4.1.{16,17,14,15,12,11}";
-	# Look up parent volume OID
-	$oid_get_parent_volume_oid="789.1.4.6.1.13";
-	# Look up parent volume name
-	$oid_get_volume_name="789.1.4.4.1.2";
-	# Just the sizes
-	$oid_get_parent_volume_stats="789.1.5.4.1.{14,15,11,16,17}";
 } else {
 	print "Sorry, I can only talk to NetApp Release 7 or 8 filers (not $productVersion).\n";
 	exit $ERRORS{'UNKNOWN'};
