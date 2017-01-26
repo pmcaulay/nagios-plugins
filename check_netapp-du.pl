@@ -3,7 +3,7 @@
 # Nagios plugin to report disk space and number files in a NetApp file share
 # Copyright (c) 2009 Rob Hassing and Peter Mc Aulay
 #
-# Last updated 2016-02-18 by Peter Mc Aulay
+# Last updated 2017-01-26 by Peter Mc Aulay
 #
 
 use strict;
@@ -21,7 +21,7 @@ my $MIBFILE = "/usr/share/snmp/mibs/NETWORK-APPLIANCE-MIB.txt";
 # Path to cache files
 my $CACHEPATH = "/tmp";
 # Filename prefix for cache files
-my $CACHEFILE = "netapp-oidcache";
+my $CACHEFILE = ".netapp-oidcache";
 
 # Default NetApp volume name prefix
 my $prefix = "/vol";
@@ -29,7 +29,7 @@ my $prefix = "/vol";
 ### Configuration ends ###
 
 my $PROGNAME = "check_netapp-du.pl";
-my $REVISION = "2.3c";
+my $REVISION = "2.4";
 
 # Pre-declare functions
 sub usage;
@@ -44,6 +44,9 @@ my $warning = 0;
 my $critical = 0;
 my $files_warn = 0;
 my $files_crit = 0;
+my $snmpgetcmd;
+my @result;
+my @stats;
 
 # Defaults
 my $exact = 0;
@@ -108,16 +111,50 @@ $critical = $1 if ($critical && $critical =~ /([0-9.]+)+/);
 # Strip path separators from prefix
 $prefix =~ s/\///g;
 
-#
-# Use a local cache for mapping shares to OIDs, as this is relatively static.
-# Retrieving a full inventory from the NAS every time is much too slow.
-#
-
 # Resolve hostname to IP address to account for DNS aliases, etc.
 my @hostdata = gethostbyname($host);
 (@hostdata) || usage("Host not found: $host");
 my @ipaddr = unpack("C4",$hostdata[4]);
 my $IP = join(".", @ipaddr);
+
+# Detect ONTAP version
+my ($oid_get_qtree_stats, $oid_get_volume_stats, $oid_get_parent_volume_oid, $oid_get_volume_name, $oid_get_parent_volume_stats);
+$snmpgetcmd = "/bina/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.1.2.0\"";
+@result = `$snmpgetcmd`;
+chomp(@result);
+my $productVersion = $result[0] =~ /NetApp Release (.*?):/;
+
+# Select which set of SNMP OIDs to use
+if ($productVersion =~ /^8\./) {
+	# Get size and usage
+	$oid_get_qtree_stats="789.1.4.6.1.{25,26,9,11}";
+	$oid_get_volume_stats="789.1.5.4.1.{30,29,12,11}";
+	# Look up parent volume OID
+	$oid_get_parent_volume_oid="789.1.4.6.1.29";
+	# Look up parent volume name
+	$oid_get_volume_name="789.1.4.4.1.2";
+	# Just the sizes
+	$oid_get_parent_volume_stats="789.1.5.4.1.{29,11,30}";
+
+} elsif ($productVersion =~ /^7\./) {
+	# Get size and usage
+	$oid_get_qtree_stats="789.1.4.6.1.{4,5,7,8,9,11}";
+	$oid_get_volume_stats="789.1.5.4.1.{16,17,14,15,12,11}";
+	# Look up parent volume OID
+	$oid_get_parent_volume_oid="789.1.4.6.1.13";
+	# Look up parent volume name
+	$oid_get_volume_name="789.1.4.4.1.2";
+	# Just the sizes
+	$oid_get_parent_volume_stats="789.1.5.4.1.{14,15,11,16,17}";
+} else {
+	print "Sorry, I can only talk to NetApp Release 7 or 8 filers (not $productVersion).\n";
+	exit $ERRORS{'UNKNOWN'};
+}
+
+#
+# Use a local cache for mapping shares to OIDs, as this is relatively static.
+# Retrieving a full inventory from the NAS every time is much too slow.
+#
 
 # Every host has a cache file containing an inventory of its volumes and qtrees.
 # This file is used to do OID lookups since it's much faster than asking the
@@ -134,7 +171,7 @@ if (-f $cache && (stat(_))[7] != 0 && not $forcegencache) {
 	# One cache update at a time - though a lock held for more than an hour is considered stale
 	# Note: if retrieving the share inventory takes longer than the Nagios plugin time-out, the
 	# process will be killed - so you may want to pre-generate the caches via cron.
-	if (-f "$cache.lock" && (stat("$cache.lock"))[9] gt (time - 3600)) {
+	if (-f "$cache.lock" && (stat("$cache.lock"))[9] > (time - 3600)) {
 		print "Cache update in progress, please try again later\n";
 		exit $ERRORS{'UNKNOWN'};
 	} else {
@@ -214,7 +251,7 @@ unless ($exact) {
 		next if /^$/;
 		next if $_ eq $prefix;
 		$pathdepth++;
-		if ($pathdepth gt 2) {
+		if ($pathdepth > 2) {
 			print "DEBUG: path too deep: $_\n" if $debug;
 			$match =~ s/\/$_.*//g;
 			next;
@@ -333,9 +370,6 @@ print "DEBUG: Found: $vol ($found) is a $ShareType and has ID $nr\n" if $debug;
 # Get volume properties
 #
 
-my $snmpgetcmd;
-my @stats;
-
 # Retrieved values
 my ($dfHighKBytesUsed, $dfLowKBytesUsed, $dfHighTotalKBytes, $dfLowTotalKBytes);
 my ($dfMaxFilesUsed, $dfMaxFilesAvail);
@@ -348,10 +382,10 @@ my ($dfFilesMax, $dfFilesUsed, $dfPctFiles);
 # Construct command line - get the same data for all types, in the same order
 if ($ShareType eq "QTree") {
 	# qrV2HighKBytesUsed, qrV2LowKBytesUsed, qrV2HighKBytesLimit, qrV2LowKBytesLimit, qrV2FilesUsed, qrV2FileLimit
-	$snmpgetcmd = "/bin/sh -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.4.6.1.{4,5,7,8,9,11}.$nr\"";
+	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_qtree_stats.$nr\"";
 } elsif ($ShareType eq "Volume") {
 	# dfHighKBytesUsed, dfLowKBytesUsed, dfHighTotalKBytes, dfLowTotalKBytes, dfMaxFilesUsed, dfMaxFilesAvail
-	$snmpgetcmd = "/bin/sh -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.5.4.1.{16,17,14,15,12,11}.$nr\"";
+	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_volume_stats.$nr\"";
 }
 
 # Execute
@@ -382,26 +416,27 @@ $dfMaxFilesAvail = $stats[5];
 # From https://communities.netapp.com/thread/1305:
 # if (Low >= 0) x = High * 2^32 + Low
 # if (Low < 0)  x = (High + 1) * 2^32 + Low
-$dfKBytesUsed = ($dfHighKBytesUsed * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed ge 0;
-$dfKBytesUsed = (($dfHighKBytesUsed + 1) * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed lt 0;
-$dfKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes ge 0;
-$dfKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes lt 0;
+$dfKBytesUsed = ($dfHighKBytesUsed * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed >= 0;
+$dfKBytesUsed = (($dfHighKBytesUsed + 1) * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed < 0;
+$dfKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
+$dfKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
 
 # Check that the QTrees has valid quota defined, otherwise use the parent volume for max size and file limit values
 my $hasQuota = 1;
+my $parent_nr = '';
 my ($RealKBytesTotal, $RealKBytesUsed, $RealFilesAvail, $RealHighKBytesUsed, $RealLowKBytesUsed, $RealKBFree);
 if ($ShareType eq "QTree") {
 	# Get parent volume ID
-	$snmpgetcmd = "/bin/sh -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.4.6.1.13.$nr\"";
-	@stats = `$snmpgetcmd`;
-	chomp(@stats);
-	my $qrV2Volume = $stats[0];
+	$snmpgetcmd = "/bina/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_parent_volume_oid.$nr\"";
+	@result = `$snmpgetcmd`;
+	chomp(@result);
+	my $qrV2Volume = $result[0];
 
 	# Get volume name
-	$snmpgetcmd = "/bin/sh -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.4.4.1.2.$qrV2Volume\"";
-	@stats = `$snmpgetcmd`;
-	chomp(@stats);
-	my $qvStateName = $stats[0];
+	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_volume_name.$qrV2Volume\"";
+	@result = `$snmpgetcmd`;
+	chomp(@result);
+	my $qvStateName = $result[0];
 	$qvStateName =~ s/"//g;
 
 	# Look up this volume in the cache to get the OID
@@ -410,25 +445,25 @@ if ($ShareType eq "QTree") {
 		my @fields;
 		# Strip duplicate quotes (added by some MIB versions)
 		$line =~ s/""/"/g;
-		if ($line =~ m{Volume:.*:"/$prefix/$qvStateName/"}i) {
+		if ($line =~ m{Volume:.*:"/$prefix/$qvStateName/?"}i) {
 			@fields = split(/:/, $line);
-			$nr = $fields[1];
+			$parent_nr = $fields[1];
 			last;
 		}
 	}
 	close FILE;
 
-	print "DEBUG: QTree's parent volume /$prefix/$qvStateName/ has OID $nr\n" if $debug;
+	print "DEBUG: QTree's parent volume /$prefix/$qvStateName has OID $parent_nr\n" if $debug;
 
 	# Finally, get volume stats
 	# dfHighTotalKBytes, dfLowTotalKBytes, dfMaxFilesAvail, dfHighKBytesUsed, dfLowKBytesUsed
-	$snmpgetcmd = "/bin/sh -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.5.4.1.{14,15,11,16,17}.$nr\"";
+	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_parent_volume_stats.$parent_nr\"";
 	@stats = `$snmpgetcmd`;
 	chomp(@stats);
 	unless ($stats[0] =~ /\d+/) {
 		print "Error during SNMP GET: ";
 		if ($stats[0] eq 'No Such Instance currently exists at this OID') {
-			print "Object ID $nr does not exist (cache out of date?)";
+			print "Object ID $parent_nr does not exist (cache out of date?)";
 		} else {
 			print "Cannot connect to NAS";
 		}
@@ -445,10 +480,10 @@ if ($ShareType eq "QTree") {
 	$RealLowKBytesUsed = $stats[4];
 
 	# Calculate totals
-	$RealKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes ge 0;
-	$RealKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32  + $dfLowTotalKBytes) if $dfLowTotalKBytes lt 0;
-	$RealKBytesUsed = ($RealHighKBytesUsed * 2**32 + $RealLowKBytesUsed) if $RealLowKBytesUsed ge 0;
-	$RealKBytesUsed = (($RealHighKBytesUsed +1) * 2**32  + $RealLowKBytesUsed) if $RealLowKBytesUsed lt 0;
+	$RealKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
+	$RealKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32  + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
+	$RealKBytesUsed = ($RealHighKBytesUsed * 2**32 + $RealLowKBytesUsed) if $RealLowKBytesUsed >= 0;
+	$RealKBytesUsed = (($RealHighKBytesUsed +1) * 2**32  + $RealLowKBytesUsed) if $RealLowKBytesUsed < 0;
 
 	$RealKBFree = $RealKBytesTotal - $RealKBytesUsed;
 
@@ -495,26 +530,26 @@ my $status;
 my $rc;
 
 # Catch "Qtree's underlying volume full" condition
-if ($RealKBFree && $RealKBFree le 0) {
+if ($RealKBFree && $RealKBFree <= 0) {
 	$status = "CRITICAL - VOLUME FULL";
 	$rc = $ERRORS{'CRITICAL'};
 # Disk space critical
-} elsif ($critical && $dfPctUsed lt $critical) {
+} elsif ($critical && $dfPctUsed < $critical) {
 	$status = "CRITICAL";
 	$rc = $ERRORS{'CRITICAL'};
 
 # Disk space warning
-} elsif ($warning && $dfPctUsed lt $warning) {
+} elsif ($warning && $dfPctUsed < $warning) {
 	$status = "WARNING";
 	$rc = $ERRORS{'WARNING'};
 
 # Files critical
-} elsif ($files_crit && $dfFilesUsed lt $files_crit) {
+} elsif ($files_crit && $dfFilesUsed < $files_crit) {
 	$status = "FILES CRITICAL";
 	$rc = $ERRORS{'CRITICAL'};
 
 # Files warning
-} elsif ($files_warn && $dfFilesUsed lt $files_warn) {
+} elsif ($files_warn && $dfFilesUsed < $files_warn) {
 	$status = "FILES WARNING";
 	$rc = $ERRORS{'WARNING'};
 
