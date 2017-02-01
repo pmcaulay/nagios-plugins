@@ -3,11 +3,12 @@
 # Nagios plugin to report disk space and number files in a NetApp file share
 # Copyright (c) 2009 Rob Hassing and Peter Mc Aulay
 #
-# Last updated 2017-01-26 by Peter Mc Aulay
+# Last updated 2017-02-01 by Peter Mc Aulay
 #
 
 use strict;
-use lib "/usr/lib/nagios/plugins"  ;
+use lib "/usr/lib/nagios/plugins";
+use lib "/usr/lib64/nagios/plugins";
 use lib "/usr/local/nagios/libexec";
 use Getopt::Long qw(:config no_ignore_case);
 use utils qw(%ERRORS);
@@ -29,7 +30,7 @@ my $prefix = "/vol";
 ### Configuration ends ###
 
 my $PROGNAME = "check_netapp-du.pl";
-my $REVISION = "2.4";
+my $REVISION = "2.4.1";
 
 # Pre-declare functions
 sub usage;
@@ -118,37 +119,40 @@ my @ipaddr = unpack("C4",$hostdata[4]);
 my $IP = join(".", @ipaddr);
 
 # Detect ONTAP version
-my ($oid_get_qtree_stats, $oid_get_volume_stats, $oid_get_parent_volume_oid, $oid_get_volume_name, $oid_get_parent_volume_stats);
-$snmpgetcmd = "/bina/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.1.2.0\"";
+my ($oid_get_qtree_stats, $oid_get_volume_stats, $oid_get_parent_volume_oid, $oid_get_volume_name);
+$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.1.2.0\"";
 @result = `$snmpgetcmd`;
 chomp(@result);
 my $productVersion = $result[0] =~ /NetApp Release (.*?):/;
+my $counter_size;
 
 # Select which set of SNMP OIDs to use
 #
 # ONTAP 7.x or 8.x in "7-Mode"
 if ($productVersion =~ /^7\./ or $productVersion =~ /7-Mode/) {
-	# Get size and usage
+	$counter_size = 32;
+	# Get size and usage:
+	# qrV2HighKBytesUsed, qrV2LowKBytesUsed, qrV2HighKBytesLimit, qrV2LowKBytesLimit, qrV2FilesUsed, qrV2FileLimit
 	$oid_get_qtree_stats="789.1.4.6.1.{4,5,7,8,9,11}";
+	# dfHighKBytesUsed, dfLowKBytesUsed, dfHighTotalKBytes, dfLowTotalKBytes, dfMaxFilesUsed, dfMaxFilesAvail
 	$oid_get_volume_stats="789.1.5.4.1.{16,17,14,15,12,11}";
 	# Look up parent volume OID
 	$oid_get_parent_volume_oid="789.1.4.6.1.13";
 	# Look up parent volume name
 	$oid_get_volume_name="789.1.4.4.1.2";
-	# Just the sizes
-	$oid_get_parent_volume_stats="789.1.5.4.1.{14,15,11,16,17}";
 
-# ONTAP 8.x C-Mode filers use different OIDs
+# ONTAP 8.x C-Mode filers use different OIDs and 64 bit size counters
 } elsif ($productVersion =~ /^8\./) {
-	# Get size and usage
+	$counter_size = 64;
+	# Get size and usage:
+	# qrV264KBytesUsed, qrV264KBytesLimit, qrV2FilesUsed, qrV2FileLimit
 	$oid_get_qtree_stats="789.1.4.6.1.{25,26,9,11}";
+	# df64UsedKBytes, df64TotalKBytes, dfMaxFilesUsed, dfMaxFilesAvail
 	$oid_get_volume_stats="789.1.5.4.1.{30,29,12,11}";
 	# Look up parent volume OID
 	$oid_get_parent_volume_oid="789.1.4.6.1.29";
 	# Look up parent volume name
 	$oid_get_volume_name="789.1.4.4.1.2";
-	# Just the sizes
-	$oid_get_parent_volume_stats="789.1.5.4.1.{29,11,30}";
 
 } else {
 	print "Sorry, I can only talk to NetApp Release 7 or 8 filers (not $productVersion).\n";
@@ -371,13 +375,14 @@ if ($nr eq "") {
 print "DEBUG: Found: $vol ($found) is a $ShareType and has ID $nr\n" if $debug;
 
 #
-# Get volume properties
+# Get file share's usage statistics
 #
 
 # Retrieved values
 my ($dfHighKBytesUsed, $dfLowKBytesUsed, $dfHighTotalKBytes, $dfLowTotalKBytes);
 my ($dfMaxFilesUsed, $dfMaxFilesAvail);
 my ($qrV2QuotaUnlimited, $qrV2FileQuotaUnlimited);
+my ($qrV264KBytesUsed, $qrV264KBytesLimit, $df64UsedKBytes, $df64TotalKBytes);
 
 # Derived values
 my ($dfKBytesUsed, $dfGBytesUsed, $dfKBytesTotal, $dfGBytesTotal, $dfPctUsed);
@@ -385,10 +390,8 @@ my ($dfFilesMax, $dfFilesUsed, $dfPctFiles);
 
 # Construct command line - get the same data for all types, in the same order
 if ($ShareType eq "QTree") {
-	# qrV2HighKBytesUsed, qrV2LowKBytesUsed, qrV2HighKBytesLimit, qrV2LowKBytesLimit, qrV2FilesUsed, qrV2FileLimit
 	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_qtree_stats.$nr\"";
 } elsif ($ShareType eq "Volume") {
-	# dfHighKBytesUsed, dfLowKBytesUsed, dfHighTotalKBytes, dfLowTotalKBytes, dfMaxFilesUsed, dfMaxFilesAvail
 	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_volume_stats.$nr\"";
 }
 
@@ -406,24 +409,37 @@ unless ($stats[0] =~ /\d+/) {
 	exit $ERRORS{'UNKNOWN'};
 }
 
-print "DEBUG: Raw stats retrieved: HighKBUsed LowKBUsed HighKBTotal LowKBTotal FilesUsed FilesMax = @stats\n" if $debug;
-$dfHighKBytesUsed = $stats[0];
-$dfLowKBytesUsed = $stats[1];
-$dfHighTotalKBytes = $stats[2];
-$dfLowTotalKBytes = $stats[3];
-$dfMaxFilesUsed = $stats[4];
-$dfMaxFilesAvail = $stats[5];
+# 64 bit counters can be used directly
+if ($counter_size == 64) {
+	$dfKBytesUsed = $stats[0];
+	$dfKBytesTotal = $stats[1];
+	$dfMaxFilesUsed = $stats[2];
+	$dfMaxFilesAvail = $stats[3];
 
-# Disk space stats are split into two values: most and least significant 32 bits of a 64 bit unsigned integer
-# (SNMPv1/2 only support 32 bit values and this is not enough for volumes >2TB)
-#
-# From https://communities.netapp.com/thread/1305:
-# if (Low >= 0) x = High * 2^32 + Low
-# if (Low < 0)  x = (High + 1) * 2^32 + Low
-$dfKBytesUsed = ($dfHighKBytesUsed * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed >= 0;
-$dfKBytesUsed = (($dfHighKBytesUsed + 1) * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed < 0;
-$dfKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
-$dfKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
+	print "DEBUG: Raw stats retrieved (64 bit): dfKBytesUsed=$dfKBytesUsed dfKBytesTotal=$dfKBytesTotal dfMaxFilesUsed=$dfMaxFilesUsed dfMaxFilesAvail=$dfMaxFilesAvail\n" if $debug;
+
+# 32 bit counters require some assembling
+} else {
+	$dfHighKBytesUsed = $stats[0];
+	$dfLowKBytesUsed = $stats[1];
+	$dfHighTotalKBytes = $stats[2];
+	$dfLowTotalKBytes = $stats[3];
+	$dfMaxFilesUsed = $stats[4];
+	$dfMaxFilesAvail = $stats[5];
+
+	print "DEBUG: Raw stats retrieved: HighKBUsed=$dfHighKBytesUsed LowKBUsed=$dfLowKBytesUsed HighKBTotal=$dfHighTotalKBytes LowKBTotal=$dfLowTotalKBytes FilesUsed=$dfMaxFilesUsed FilesMax=$dfMaxFilesAvail\n" if $debug;
+
+	# Disk space stats are split into two values: most and least significant 32 bits of a 64 bit unsigned integer
+	# (SNMPv1/2 only support 32 bit values and this is not enough for volumes >2TB)
+	#
+	# From https://communities.netapp.com/thread/1305:
+	# if (Low >= 0) x = High * 2^32 + Low
+	# if (Low < 0)  x = (High + 1) * 2^32 + Low
+	$dfKBytesUsed = ($dfHighKBytesUsed * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed >= 0;
+	$dfKBytesUsed = (($dfHighKBytesUsed + 1) * 2**32 + $dfLowKBytesUsed) if $dfLowKBytesUsed < 0;
+	$dfKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
+	$dfKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
+}
 
 # Check that the QTrees has valid quota defined, otherwise use the parent volume for max size and file limit values
 my $hasQuota = 1;
@@ -431,7 +447,7 @@ my $parent_nr = '';
 my ($RealKBytesTotal, $RealKBytesUsed, $RealFilesAvail, $RealHighKBytesUsed, $RealLowKBytesUsed, $RealKBFree);
 if ($ShareType eq "QTree") {
 	# Get parent volume ID
-	$snmpgetcmd = "/bina/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_parent_volume_oid.$nr\"";
+	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_parent_volume_oid.$nr\"";
 	@result = `$snmpgetcmd`;
 	chomp(@result);
 	my $qrV2Volume = $result[0];
@@ -459,9 +475,8 @@ if ($ShareType eq "QTree") {
 
 	print "DEBUG: QTree's parent volume /$prefix/$qvStateName has OID $parent_nr\n" if $debug;
 
-	# Finally, get volume stats
-	# dfHighTotalKBytes, dfLowTotalKBytes, dfMaxFilesAvail, dfHighKBytesUsed, dfLowKBytesUsed
-	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_parent_volume_stats.$parent_nr\"";
+	# Finally, get volume stats of parent volume
+	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_volume_stats.$parent_nr\"";
 	@stats = `$snmpgetcmd`;
 	chomp(@stats);
 	unless ($stats[0] =~ /\d+/) {
@@ -475,19 +490,35 @@ if ($ShareType eq "QTree") {
 		exit $ERRORS{'UNKNOWN'};
 	}
 
-	print "DEBUG: Raw volume stats retrieved: dfHighTotalKBytes dfLowTotalKBytes dfMaxFilesAvail dfHighKBytesUsed dfLowKBytesUsed = @stats\n" if $debug;
+	# 64 bit counters can be used directly
+	if ($counter_size == 64) {
+		$dfKBytesUsed = $stats[0];
+		$dfKBytesTotal = $stats[1];
+		$dfMaxFilesUsed = $stats[2];
+		$dfMaxFilesAvail = $stats[3];
 
-	$dfHighTotalKBytes = $stats[0];
-	$dfLowTotalKBytes = $stats[1];
-	$RealFilesAvail = $stats[2];
-	$RealHighKBytesUsed = $stats[3];
-	$RealLowKBytesUsed = $stats[4];
+		print "DEBUG: Raw stats retrieved (64 bit): dfKBytesUsed=$dfKBytesUsed dfKBytesTotal=$dfKBytesTotal dfMaxFilesUsed=$dfMaxFilesUsed dfMaxFilesAvail=$dfMaxFilesAvail\n" if $debug;
 
-	# Calculate totals
-	$RealKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
-	$RealKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32  + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
-	$RealKBytesUsed = ($RealHighKBytesUsed * 2**32 + $RealLowKBytesUsed) if $RealLowKBytesUsed >= 0;
-	$RealKBytesUsed = (($RealHighKBytesUsed +1) * 2**32  + $RealLowKBytesUsed) if $RealLowKBytesUsed < 0;
+		$RealKBytesTotal = $dfKBytesTotal;
+		$RealKBytesUsed = $dfKBytesUsed;
+
+	# 32 bit counters require some assembling
+	} else {
+		$dfHighKBytesUsed = $stats[0];
+		$dfLowKBytesUsed = $stats[1];
+		$dfHighTotalKBytes = $stats[2];
+		$dfLowTotalKBytes = $stats[3];
+		$dfMaxFilesUsed = $stats[4];
+		$dfMaxFilesAvail = $stats[5];
+
+		print "DEBUG: Raw volume stats retrieved: dfHighTotalKBytes=$dfHighTotalKBytes dfLowTotalKBytes=$dfLowTotalKBytes dfMaxFilesAvail=$RealFilesAvail dfHighKBytesUsed=$RealHighKBytesUsed dfLowKBytesUsed=$RealLowKBytesUsed\n" if $debug;
+
+		# Calculate totals
+		$RealKBytesTotal = ($dfHighTotalKBytes * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes >= 0;
+		$RealKBytesTotal = (($dfHighTotalKBytes + 1) * 2**32 + $dfLowTotalKBytes) if $dfLowTotalKBytes < 0;
+		$RealKBytesUsed = ($RealHighKBytesUsed * 2**32 + $RealLowKBytesUsed) if $RealLowKBytesUsed >= 0;
+		$RealKBytesUsed = (($RealHighKBytesUsed +1) * 2**32 + $RealLowKBytesUsed) if $RealLowKBytesUsed < 0;
+	}
 
 	$RealKBFree = $RealKBytesTotal - $RealKBytesUsed;
 
@@ -583,11 +614,11 @@ sub find_share_in_cache() {
 
 # Die with usage info, for improper invocation
 sub usage {
-        my $format = shift;
-        printf($format, @_);
-        print "\n";
+	my $format = shift;
+	printf($format, @_);
+	print "\n";
 	print "Use --help for detailed instructions.\n";
-        exit $ERRORS{'UNKNOWN'};
+	exit $ERRORS{'UNKNOWN'};
 }
 
 # Print version and exit
