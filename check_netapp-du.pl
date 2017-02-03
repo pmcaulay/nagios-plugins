@@ -3,7 +3,7 @@
 # Nagios plugin to report disk space and number files in a NetApp file share
 # Copyright (c) 2009 Rob Hassing and Peter Mc Aulay
 #
-# Last updated 2017-02-01 by Peter Mc Aulay
+# Last updated 2017-02-03 by Peter Mc Aulay
 #
 
 use strict;
@@ -30,7 +30,7 @@ my $prefix = "/vol";
 ### Configuration ends ###
 
 my $PROGNAME = "check_netapp-du.pl";
-my $REVISION = "2.4.1";
+my $REVISION = "2.4.2";
 
 # Pre-declare functions
 sub usage;
@@ -123,11 +123,12 @@ my ($oid_get_qtree_stats, $oid_get_volume_stats, $oid_get_parent_volume_oid, $oi
 $snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.1.2.0\"";
 @result = `$snmpgetcmd`;
 chomp(@result);
-my $productVersion = $result[0] =~ /NetApp Release (.*?):/;
+$result[0] =~ /NetApp Release (.*?):/;
+my $productVersion = $1;
 my $counter_size;
 
 # Select which set of SNMP OIDs to use
-#
+
 # ONTAP 7.x or 8.x in "7-Mode"
 if ($productVersion =~ /^7\./ or $productVersion =~ /7-Mode/) {
 	$counter_size = 32;
@@ -136,10 +137,6 @@ if ($productVersion =~ /^7\./ or $productVersion =~ /7-Mode/) {
 	$oid_get_qtree_stats="789.1.4.6.1.{4,5,7,8,9,11}";
 	# dfHighKBytesUsed, dfLowKBytesUsed, dfHighTotalKBytes, dfLowTotalKBytes, dfMaxFilesUsed, dfMaxFilesAvail
 	$oid_get_volume_stats="789.1.5.4.1.{16,17,14,15,12,11}";
-	# Look up parent volume OID
-	$oid_get_parent_volume_oid="789.1.4.6.1.13";
-	# Look up parent volume name
-	$oid_get_volume_name="789.1.4.4.1.2";
 
 # ONTAP 8.x C-Mode filers use different OIDs and 64 bit size counters
 } elsif ($productVersion =~ /^8\./) {
@@ -149,15 +146,18 @@ if ($productVersion =~ /^7\./ or $productVersion =~ /7-Mode/) {
 	$oid_get_qtree_stats="789.1.4.6.1.{25,26,9,11}";
 	# df64UsedKBytes, df64TotalKBytes, dfMaxFilesUsed, dfMaxFilesAvail
 	$oid_get_volume_stats="789.1.5.4.1.{30,29,12,11}";
-	# Look up parent volume OID
-	$oid_get_parent_volume_oid="789.1.4.6.1.29";
-	# Look up parent volume name
-	$oid_get_volume_name="789.1.4.4.1.2";
 
 } else {
 	print "Sorry, I can only talk to NetApp Release 7 or 8 filers (not $productVersion).\n";
 	exit $ERRORS{'UNKNOWN'};
 }
+
+# Common OIDs
+#
+# Look up parent volume OID (qrV2Volume)
+$oid_get_parent_volume_oid="789.1.4.6.1.13";
+# Look up parent volume name (qvStateName)
+$oid_get_volume_name="789.1.4.4.1.2";
 
 #
 # Use a local cache for mapping shares to OIDs, as this is relatively static.
@@ -443,46 +443,31 @@ if ($counter_size == 64) {
 
 # Check that the QTrees has valid quota defined, otherwise use the parent volume for max size and file limit values
 my $hasQuota = 1;
-my $parent_nr = '';
 my ($RealKBytesTotal, $RealKBytesUsed, $RealFilesAvail, $RealHighKBytesUsed, $RealLowKBytesUsed, $RealKBFree);
 if ($ShareType eq "QTree") {
-	# Get parent volume ID
+	# Get parent volume OID
 	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_parent_volume_oid.$nr\"";
 	@result = `$snmpgetcmd`;
 	chomp(@result);
 	my $qrV2Volume = $result[0];
 
-	# Get volume name
+	# Get parent volume name
 	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_volume_name.$qrV2Volume\"";
 	@result = `$snmpgetcmd`;
 	chomp(@result);
 	my $qvStateName = $result[0];
 	$qvStateName =~ s/"//g;
 
-	# Look up this volume in the cache to get the OID
-	open(FILE, $cache) or die "Failed to open file $cache: $!\n";
-	while(my $line = <FILE>) {
-		my @fields;
-		# Strip duplicate quotes (added by some MIB versions)
-		$line =~ s/""/"/g;
-		if ($line =~ m{Volume:.*:"/$prefix/$qvStateName/?"}i) {
-			@fields = split(/:/, $line);
-			$parent_nr = $fields[1];
-			last;
-		}
-	}
-	close FILE;
-
-	print "DEBUG: QTree's parent volume /$prefix/$qvStateName has OID $parent_nr\n" if $debug;
+	print "DEBUG: QTree's parent volume /$prefix/$qvStateName has OID $qrV2Volume\n" if $debug;
 
 	# Finally, get volume stats of parent volume
-	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_volume_stats.$parent_nr\"";
+	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_volume_stats.$qrV2Volume\"";
 	@stats = `$snmpgetcmd`;
 	chomp(@stats);
 	unless ($stats[0] =~ /\d+/) {
 		print "Error during SNMP GET: ";
 		if ($stats[0] eq 'No Such Instance currently exists at this OID') {
-			print "Object ID $parent_nr does not exist (cache out of date?)";
+			print "Object ID $qrV2Volume does not exist (cache out of date?)";
 		} else {
 			print "Cannot connect to NAS";
 		}
