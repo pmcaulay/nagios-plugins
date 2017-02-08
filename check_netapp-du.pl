@@ -1,9 +1,12 @@
 #!/usr/bin/perl -w
 #
-# Nagios plugin to report disk space and number files in a NetApp file share
+# Nagios plugin to report disk space and number of files in a NetApp file share
 # Copyright (c) 2009 Rob Hassing and Peter Mc Aulay
 #
-# Last updated 2017-02-03 by Peter Mc Aulay
+# Thanks to Frederic De Wilde, Jean-Francois Peyridieu and Toni Garcia-Navarro
+# for their assistance in adding support for 64 bit counters.
+#
+# Last updated 2017-02-08 by Peter Mc Aulay
 #
 
 use strict;
@@ -27,10 +30,12 @@ my $CACHEFILE = ".netapp-oidcache";
 # Default NetApp volume name prefix
 my $prefix = "/vol";
 
-### Configuration ends ###
+#
+# Configuration ends ###
+#
 
 my $PROGNAME = "check_netapp-du.pl";
-my $REVISION = "2.4.2";
+my $REVISION = "2.4.3";
 
 # Pre-declare functions
 sub usage;
@@ -118,6 +123,10 @@ my @hostdata = gethostbyname($host);
 my @ipaddr = unpack("C4",$hostdata[4]);
 my $IP = join(".", @ipaddr);
 
+#
+# Select which set of SNMP OIDs to use
+#
+
 # Detect ONTAP version
 my ($oid_get_qtree_stats, $oid_get_volume_stats, $oid_get_parent_volume_oid, $oid_get_volume_name);
 $snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.789.1.1.2.0\"";
@@ -126,8 +135,6 @@ chomp(@result);
 $result[0] =~ /NetApp Release (.*?):/;
 my $productVersion = $1;
 my $counter_size;
-
-# Select which set of SNMP OIDs to use
 
 # ONTAP 7.x or 8.x in "7-Mode"
 if ($productVersion =~ /^7\./ or $productVersion =~ /7-Mode/) {
@@ -172,7 +179,8 @@ my $cache = "$CACHEPATH/$CACHEFILE.$IP";
 # If cache file exists and is not empty, use it
 if (-f $cache && (stat(_))[7] != 0 && not $forcegencache) {
 	print "DEBUG: Cache found: $cache\n" if $debug;
-# Cache files should be refreshed regularly
+# Cache files should be refreshed regularly, because NetApp renumbers objects
+# during normal use, when adding or removing shares or snapshots
 } else {
 	print "DEBUG: No cache file or cache regeneration forced\n" if $debug;
 
@@ -403,7 +411,7 @@ unless ($stats[0] =~ /\d+/) {
 	if ($stats[0] eq 'No Such Instance currently exists at this OID') {
 		print "Object ID $nr does not exist (cache out of date?)";
 	} else {
-		print "Cannot connect to NAS";
+		print "Cannot connect to NAS: " . $stats[0];
 	}
 	print "\n";
 	exit $ERRORS{'UNKNOWN'};
@@ -411,8 +419,14 @@ unless ($stats[0] =~ /\d+/) {
 
 # 64 bit counters can be used directly
 if ($counter_size == 64) {
-	$dfKBytesUsed = $stats[0];
-	$dfKBytesTotal = $stats[1];
+	# Despite the name, these counters return bytes for QTrees (this may be a bug)
+	if ($ShareType eq "QTree") {
+		$dfKBytesUsed = $stats[0] / 1024;
+		$dfKBytesTotal = $stats[1] / 1024;
+	} else {
+		$dfKBytesUsed = $stats[0];
+		$dfKBytesTotal = $stats[1];
+	}
 	$dfMaxFilesUsed = $stats[2];
 	$dfMaxFilesAvail = $stats[3];
 
@@ -443,7 +457,7 @@ if ($counter_size == 64) {
 
 # Check that the QTrees has valid quota defined, otherwise use the parent volume for max size and file limit values
 my $hasQuota = 1;
-my ($RealKBytesTotal, $RealKBytesUsed, $RealFilesAvail, $RealHighKBytesUsed, $RealLowKBytesUsed, $RealKBFree);
+my ($RealKBytesTotal, $RealKBytesUsed, $RealMaxFilesUsed, $RealFilesAvail, $RealHighKBytesUsed, $RealLowKBytesUsed, $RealKBFree);
 if ($ShareType eq "QTree") {
 	# Get parent volume OID
 	$snmpgetcmd = "/bin/bash -c \"/usr/bin/snmpget -v 2c -Cf -OvqU -c $snmp_comm $IP SNMPv2-SMI::enterprises.$oid_get_parent_volume_oid.$nr\"";
@@ -469,7 +483,7 @@ if ($ShareType eq "QTree") {
 		if ($stats[0] eq 'No Such Instance currently exists at this OID') {
 			print "Object ID $qrV2Volume does not exist (cache out of date?)";
 		} else {
-			print "Cannot connect to NAS";
+			print "Cannot connect to NAS: " . $stats[0];
 		}
 		print "\n";
 		exit $ERRORS{'UNKNOWN'};
@@ -477,16 +491,12 @@ if ($ShareType eq "QTree") {
 
 	# 64 bit counters can be used directly
 	if ($counter_size == 64) {
-		$dfKBytesUsed = $stats[0];
-		$dfKBytesTotal = $stats[1];
-		$dfMaxFilesUsed = $stats[2];
-		$dfMaxFilesAvail = $stats[3];
+		$RealKBytesUsed = $stats[0];
+		$RealKBytesTotal = $stats[1];
+		$RealMaxFilesUsed = $stats[2];
+		$RealFilesAvail = $stats[3];
 
-		print "DEBUG: Raw stats retrieved (64 bit): dfKBytesUsed=$dfKBytesUsed dfKBytesTotal=$dfKBytesTotal dfMaxFilesUsed=$dfMaxFilesUsed dfMaxFilesAvail=$dfMaxFilesAvail\n" if $debug;
-
-		$RealKBytesTotal = $dfKBytesTotal;
-		$RealKBytesUsed = $dfKBytesUsed;
-
+		print "DEBUG: Raw stats retrieved (64 bit): dfKBytesUsed=$RealKBytesUsed dfKBytesTotal=$RealKBytesTotal dfMaxFilesUsed=$RealMaxFilesUsed dfMaxFilesAvail=$RealFilesAvail\n" if $debug;
 	# 32 bit counters require some assembling
 	} else {
 		$dfHighKBytesUsed = $stats[0];
@@ -583,7 +593,7 @@ if ($RealKBFree && $RealKBFree <= 0) {
 #
 # Report & exit
 #
-print "$status - ", $debug ? "$ShareType " : "", $vol, $debug ? " ($found)" : "", " usage: $dfGBytesUsed / $dfGBytesTotal GB", $hasQuota ? "" : " (volume size, no quota)", " ($dfPctUsed% full), $dfFilesUsed / $dfFilesMax files ($dfPctFiles%)|used=", $dfKBytesUsed , "KB;;;; total=", $dfKBytesTotal, "KB;;;; used_pct=$dfPctUsed%;$warning;$critical;; files=$dfFilesUsed;;;; files_max=$dfFilesMax;;;; files_pct=$dfPctFiles%;;;;\n";
+print "$status - ", $debug ? "$ShareType " : "", $vol, $debug ? " ($found)" : "", " usage: $dfGBytesUsed / $dfGBytesTotal GB", $hasQuota ? "" : " (volume limit, no quota)", " ($dfPctUsed% full), $dfFilesUsed / $dfFilesMax files ($dfPctFiles%)|used=", $dfKBytesUsed , "KB;", $warning ? ($warning * $dfKBytesTotal) : "" ,";", $critical ? ($critical * $dfKBytesTotal) : "" ,";0;",$dfKBytesTotal," used_pct=$dfPctUsed%;", $warning ? $warning : "" ,";", $critical ? $critical : "" ,";0;100 files=$dfFilesUsed;", $files_warn ? ($files_warn * $dfFilesMax) : "" ,";", $files_crit ? ($files_crit * $dfFilesMax) : "" ,";0;$dfFilesMax files_pct=$dfPctFiles%;", $files_warn ? $files_warn : "" ,";", $files_crit ? $files_crit : "" ,";0;100\n";
 exit $rc;
 
 ### Main programme ends ###
