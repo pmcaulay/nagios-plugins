@@ -35,7 +35,7 @@ my $prefix = "/vol";
 #
 
 my $PROGNAME = "check_netapp-du.pl";
-my $REVISION = "2.4.3";
+my $REVISION = "2.4.4";
 
 # Pre-declare functions
 sub usage;
@@ -564,22 +564,22 @@ if ($RealKBFree && $RealKBFree <= 0) {
 	$status = "CRITICAL - VOLUME FULL";
 	$rc = $ERRORS{'CRITICAL'};
 # Disk space critical
-} elsif ($critical && $dfPctUsed < $critical) {
+} elsif ($critical && $dfPctUsed > $critical) {
 	$status = "CRITICAL";
 	$rc = $ERRORS{'CRITICAL'};
 
 # Disk space warning
-} elsif ($warning && $dfPctUsed < $warning) {
+} elsif ($warning && $dfPctUsed > $warning) {
 	$status = "WARNING";
 	$rc = $ERRORS{'WARNING'};
 
 # Files critical
-} elsif ($files_crit && $dfFilesUsed < $files_crit) {
+} elsif ($files_crit && $dfFilesUsed > $files_crit) {
 	$status = "FILES CRITICAL";
 	$rc = $ERRORS{'CRITICAL'};
 
 # Files warning
-} elsif ($files_warn && $dfFilesUsed < $files_warn) {
+} elsif ($files_warn && $dfFilesUsed > $files_warn) {
 	$status = "FILES WARNING";
 	$rc = $ERRORS{'WARNING'};
 
