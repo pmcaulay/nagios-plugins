@@ -6,7 +6,7 @@
 # Thanks to Frederic De Wilde, Jean-Francois Peyridieu and Toni Garcia-Navarro
 # for their assistance in adding support for 64 bit counters.
 #
-# Last updated 2017-02-08 by Peter Mc Aulay
+# Last updated 2017-02-13 by Peter Mc Aulay
 #
 
 use strict;
