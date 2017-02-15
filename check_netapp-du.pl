@@ -593,7 +593,7 @@ if ($RealKBFree && $RealKBFree <= 0) {
 #
 # Report & exit
 #
-print "$status - ", $debug ? "$ShareType " : "", $vol, $debug ? " ($found)" : "", " usage: $dfGBytesUsed / $dfGBytesTotal GB", $hasQuota ? "" : " (volume limit, no quota)", " ($dfPctUsed% full), $dfFilesUsed / $dfFilesMax files ($dfPctFiles%)|used=", $dfKBytesUsed , "KB;", $warning ? ($warning * $dfKBytesTotal) : "" ,";", $critical ? ($critical * $dfKBytesTotal) : "" ,";0;",$dfKBytesTotal," used_pct=$dfPctUsed%;", $warning ? $warning : "" ,";", $critical ? $critical : "" ,";0;100 files=$dfFilesUsed;", $files_warn ? ($files_warn * $dfFilesMax) : "" ,";", $files_crit ? ($files_crit * $dfFilesMax) : "" ,";0;$dfFilesMax files_pct=$dfPctFiles%;", $files_warn ? $files_warn : "" ,";", $files_crit ? $files_crit : "" ,";0;100\n";
+print "$status - ", $debug ? "$ShareType " : "", $vol, $debug ? " ($found)" : "", " usage: $dfGBytesUsed / $dfGBytesTotal GB", $hasQuota ? "" : " (volume limit, no quota)", " ($dfPctUsed% full), $dfFilesUsed / $dfFilesMax files ($dfPctFiles%)|used=", $dfKBytesUsed , "KB;", $warning ? ($warning * $dfKBytesTotal / 100) : "" ,";", $critical ? ($critical * $dfKBytesTotal / 100) : "" ,";0;",$dfKBytesTotal," used_pct=$dfPctUsed%;", $warning ? $warning : "" ,";", $critical ? $critical : "" ,";0;100 files=$dfFilesUsed;", $files_warn ? ($files_warn * $dfFilesMax) : "" ,";", $files_crit ? ($files_crit * $dfFilesMax) : "" ,";0;$dfFilesMax files_pct=$dfPctFiles%;", $files_warn ? $files_warn : "" ,";", $files_crit ? $files_crit : "" ,";0;100\n";
 exit $rc;
 
 ### Main programme ends ###
