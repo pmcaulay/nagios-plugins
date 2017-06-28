@@ -893,7 +893,7 @@ if (not $seek_file) {
 	my $dir_sep = File::Spec->catfile('', '');
 	(my $seek_prefix = $log_dir) =~ s#$dir_sep#-#g;
 	$seek_prefix =~ s#^-##;
-	$seek_file = File::Spec->catfile($tmpdir, $basename . '.seek');
+	$seek_file = File::Spec->catfile($tmpdir, $seek_prefix . $basename . '.seek');
 }
 print "debug: using seek file '$seek_file'\n" if $debug;
 
