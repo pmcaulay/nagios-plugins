@@ -890,6 +890,9 @@ open (LOG_FILE, $mode, "$log_file") || ioerror("Unable to open '$log_file': $!")
 # Auto-generate seek file name if necessary
 if (not $seek_file) {
 	my ($log_vol, $log_dir, $basename) = File::Spec->splitpath($log_file);
+	my $dir_sep = File::Spec->catfile('', '');
+	(my $seek_prefix = $log_dir) =~ s#$dir_sep#-#g;
+	$seek_prefix =~ s#^-##;
 	$seek_file = File::Spec->catfile($tmpdir, $basename . '.seek');
 }
 print "debug: using seek file '$seek_file'\n" if $debug;
