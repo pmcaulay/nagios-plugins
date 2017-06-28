@@ -738,7 +738,9 @@ print "Warning: '$tmpdir' not writable, seek position will not be saved\n" if no
 # Seek files are always auto-generated for dynamic log files
 if ($log_pattern) {
 	print "debug: overriding seek file for dynamic filenames\n" if $debug;
-	undef $seek_file unless $seek_file eq $devnull;
+	if ($seek_file) {
+		undef $seek_file unless $seek_file eq $devnull;
+	}
 }
 
 #
