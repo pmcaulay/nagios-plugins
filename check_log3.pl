@@ -657,7 +657,7 @@ $match_count = 1 if $stop_first_match;
 $match_count = 1 if $report_first_only;
 $skip_eof_when_done = 1 if $report_first_only;
 
-print "debug: limit output to $match_count matches\n" if $debug;
+print "debug: limit output to $match_count matches\n" if ($debug && $match_count);
 print "debug: skipping to EOF after $match_count matches\n" if ($debug && $skip_eof_when_done);
 
 # Determine line buffer characteristics
