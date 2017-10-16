@@ -21,24 +21,32 @@
 #
 # 1. The Configuration Block
 #
-# The configuration block is mandatory and must contain at least one keyword.
-# The keywords in this block define the log file locations that you want to be
-# known to the check_dpm script.  You can use this to define log locations for
-# different environments.
+# The configuration block allows you to set up log base paths and timestamp
+# patterns that will be applied to all log files.  It can be used to e.g.
+# define separate log file locations for different environments.
 #
-# The keyword "timestamp" is optional and must contain a format string as
-# understood by the date(1) command, if present and not empty.  If no timestamp
-# string is defined the log name is taken literally.  If it is defined, the
-# log names are interpreted as a path and name prefix which the script will
-# append the timestamp to, to find the current log file.  If there are filename
-# components after the timestamp, the script will find them automatically.
+# The syntax is:
 #
+# [configuration]
+# keyword = <base path to log files>
+# timestamp = <optional timestamp pattern>
+#
+# Where 'keyword' is any word (that is not a parameter) to identify the location.
+#
+# The timestamp pattern is a format string as understood by the date(1) command
+# and is similar to check_log3.pl's --logfile-pattern option.
+# 
 # You may not use any of the parameter option names as keywords.
 #
 # 2. Parameter Blocks
 #
 # The parameter blocks describe the parameters in the log file that can be
 # monitored by passing the appropriate options to check_log3.pl.
+#
+# The syntax is:
+#
+# [parameter-name]
+# option = value
 #
 # Available options:
 # - desc: free text describing the parameter.  It is returned in the Nagios
