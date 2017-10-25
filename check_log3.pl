@@ -1364,8 +1364,6 @@ Log file control:
     'yesterday' are also recognised.  The default is 'now'.
     If this expression is purely numerical it will be interpreted as seconds
     since 1970-01-01 00:00:00 UTC.
---show-filename
-    Print the name of the actual input file in the plugin output.
 
 Search pattern control:
 
@@ -1487,6 +1485,8 @@ Output control:
 --no-perfdata
     Suppress the standard performance data output from the plugin.  Use this
     if your are using custom parsing code and generate your own perfdata.
+--show-filename
+    Print the name of the actual input file in the plugin output.
 --timeout=<seconds>
     Override the plugin time-out timer (by default $TIMEOUT seconds).  The plugin
     will return UNKNOWN if the plugin runs for more than this many seconds.
