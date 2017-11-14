@@ -1301,10 +1301,10 @@ sub read_next {
 # Short usage info
 sub print_usage () {
 	print "This is $prog_name version $plugin_revision\n\n";
-	print "Usage: $prog_name [ -h | --help ]\n";
 	print "Usage: $prog_name [ -v | --version ]\n";
+	print "Usage: $prog_name [ -h | --help ]\n";
 	print "Usage: $prog_name --manual\n";
-	print "Usage: $prog_name [ -v | --list-encodings ]\n";
+	print "Usage: $prog_name --list-encodings\n";
 
 	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
 	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir] [--show-filename]
@@ -1499,6 +1499,8 @@ Support information:
     This help screen.
 --manual
     The full manual.
+-v, --version
+    Print plugin version number and exit.
 
 Send email to pmcaulay\@evilgeek.net if you have questions regarding use of this
 software, or to submit patches or suggest improvements.  Please include version
