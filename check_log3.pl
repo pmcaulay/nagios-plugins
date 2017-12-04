@@ -27,6 +27,7 @@ Rewritten by Peter Mc Aulay and Tom Wuyts
 The --output-all feature was contributed by Ian Gibbs 
 The --and feature was contributed by Wesley Moore
 The --report-only feature was contributed by Andy Speagle
+The -M|returnmessage and -R|restartcommand features were added by Noah Guttman <noah.guttman@gmail.com>
 
 Released under the terms of the GNU General Public Licence v2.0
 
@@ -334,6 +335,19 @@ and match counts are not returned.
 You can suppress the plugin's standard "lines" and "parsed" perfdata counters
 using the --no-perfdata option.
 
+=head1 OTHER COUTPUT OPTIONS
+
+Use the -R, --restartcommand option to specify the startup script name under 
+/etc/rc.d/init.d/ needed to restart the process that is writing to this log
+file. This name will be added to beggining of the output of any checks that
+return CRITICAL so that nagios event handlers can easilty parse out this 
+informatiom to trigger a process restart
+
+Use the -M, --returnmessage option to specify a message to the end of the 
+check output  of any checks that return CRITICAL. This can be used to easliy
+pass information about this specific error and/or a URL to a doccument that
+will aid in diagnosing/correcting it.
+
 
 =head1 NAGIOS SERVICE CHECK CONFIGURATION NOTES
 
@@ -551,6 +565,9 @@ my $list_enc;
 my $crlf;
 my $show_filename = undef;
 my $secure = undef;
+my $restart_command = '';
+my $return_message = '';
+
 
 # If invoked with a path, strip the path from our name
 my ($prog_vol, $prog_dir, $prog_name) = File::Spec->splitpath($0);
@@ -600,6 +617,8 @@ GetOptions (
 	"h|help"		=> \$help,
 	"debug"			=> \$debug,
 	"manual"		=> sub { pod2usage(-exitval => $ERRORS{'OK'}, -verbose => 2) },
+	"R|restartcommand=s"            => \$restart_command,
+        "M|returnmessage=s"             => \$return_message,
 );
 
 # Set output encoding before we output anything
@@ -917,7 +936,11 @@ if (open(SEEK_FILE, "$seek_file")) {
 		# If the file hasn't grown since last time and a nodiff option was specified, stop here.
 		$diff_crit = 1 if ($diff_warn && $critical);
 		if ($seek_pos[0] == $size && $diff_crit) {
-			print "CRITICAL: Log file not written to since last check\n";
+		        if ($restart_command){
+			  print "$restart_command ";
+			}
+			print "CRITICAL: Log file not written to since last check $return_message\n";
+			if 
 			exit $ERRORS{'CRITICAL'};
 		} elsif ($seek_pos[0] == $size && $diff_warn) {
 			print "WARNING: Log file not written to since last check\n";
@@ -1046,7 +1069,10 @@ print "debug: found $pattern_count maches, total lines $total, parse count $pars
 # If this was a nodiff check we just count the lines and stop
 if (!$re_pattern) {
 	if ($diff_crit && $total < $critical) {
-		print "CRITICAL: Only $total lines written since last check (expected at least $critical)\n";
+		if ($restart_command){
+			print "$restart_command ";
+		}
+		print "CRITICAL: Only $total lines written since last check (expected at least $critical) $return_message\n";
 		exit $ERRORS{'CRITICAL'};
 	} elsif ($diff_warn && $total < $warning) {
 		print "WARNING: Only $total lines written since last check (expected at least $warning)\n";
@@ -1492,6 +1518,15 @@ Output control:
     will return UNKNOWN if the plugin runs for more than this many seconds.
 --no-timeout
     Equivalent to --timeout=0.
+ -R, --restartcommand=<startup command>
+    The startup script name under /etc/rc.d/init.d/ needed to restart the process
+    that is writing to this log file. This will be appended to the begging of the 
+    test output on CRITICAL errors for easy parsing by event handler scripts.
+ -M, --returnmessage=<message>
+    A message to append to the end of the check output on a CRITICAL result.
+    This can be used to provide intructions on what to do when this check fails.
+    Make sure to use quotes to avoid problems
+
 
 Support information:
 
