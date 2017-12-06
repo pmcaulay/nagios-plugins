@@ -477,7 +477,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.13';
+my $plugin_revision = '3.14';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -804,7 +804,7 @@ if ($log_pattern) {
 	my ($vol, $dir, $file) = File::Spec->splitpath($log_file);
 	my $logprefix = File::Spec->catpath($vol, $dir, $file);
 	print "debug: looking for files matching '$log_file$log_pattern'\n" if $debug;
-	@logfiles = bsd_glob("$log_file$log_pattern");
+	@logfiles = bsd_glob("$logprefix$log_pattern");
 
 # Only if not using -m
 } elsif (-d "$log_file") {
@@ -891,13 +891,22 @@ open (LOG_FILE, $mode, "$log_file") || ioerror("Unable to open '$log_file': $!")
 
 # Auto-generate seek file name if necessary
 if (not $seek_file) {
+	# Break down $tmpdir in case it contains a volume name (for Win32)
+	my ($tmp_vol, $tmp_dirs, $no_file) = File::Spec->splitpath($tmpdir, 1);
+	# Generate seek file name based on the log file path and filename
 	my ($log_vol, $log_dir, $basename) = File::Spec->splitpath($log_file);
 	my $dir_sep = File::Spec->catfile('', '');
+	# If the directory separator turns out to be a backslash, escape it (for Win32)
+	$dir_sep = '\\\\' if $dir_sep eq '\\';
+	# Flatten directory separators using hyphens
 	(my $seek_prefix = $log_dir) =~ s#$dir_sep#-#g;
 	$seek_prefix =~ s#^-##;
-	$seek_file = File::Spec->catfile($tmpdir, $seek_prefix . $basename . '.seek');
+	$seek_file = File::Spec->catpath($tmp_vol, $tmp_dirs, $seek_prefix . $basename . '.seek');
+	print "debug: using auto seek file '$seek_file'\n" if $debug;
+} else {
+	# If you specify one manually we assume you know what form it's supposed to take
+	print "debug: using manual seek file '$seek_file'\n" if $debug;
 }
-print "debug: using seek file '$seek_file'\n" if $debug;
 
 # Get size of log file
 my @stat = stat(LOG_FILE);
