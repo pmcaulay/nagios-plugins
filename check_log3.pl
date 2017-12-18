@@ -140,6 +140,21 @@ service check interval.  If no search pattern was specified but only -d or
 -D, the -w and -c options control the number of expected new lines before an
 alert is triggered.  In that case the -D option is equivalent to B<-d -c 1>.
 
+=head3 Dealing with heartbeat failures
+
+Use the -R, --restartcommand option to specify a SysV init script or systemd
+service needed to restart the process that is writing to this log file. This
+name will be prefixed to the output of the service output if the service status
+is CRITICAL.  It's meant to be parsed by an event handler script for triggering
+an automatic service restart in case of an outage (event handler not included).
+
+Use the -M, --returnmessage option to append a message to the end of the check
+output if the status is CRITICAL.  This can be useful for passing additional
+information, links to documentation and/or work instructions to operators.
+You will probably want to put quotes around this message.
+
+The content of these two string option is not parsed by this plugin.
+
 =head2 Custom output processing
 
 Optionally the plugin can execute a block of Perl code on each matched line,
@@ -335,19 +350,6 @@ and match counts are not returned.
 You can suppress the plugin's standard "lines" and "parsed" perfdata counters
 using the --no-perfdata option.
 
-=head1 OTHER COUTPUT OPTIONS
-
-Use the -R, --restartcommand option to specify the startup script name under 
-/etc/rc.d/init.d/ needed to restart the process that is writing to this log
-file. This name will be added to beggining of the output of any checks that
-return CRITICAL so that nagios event handlers can easilty parse out this 
-informatiom to trigger a process restart
-
-Use the -M, --returnmessage option to specify a message to the end of the 
-check output  of any checks that return CRITICAL. This can be used to easliy
-pass information about this specific error and/or a URL to a doccument that
-will aid in diagnosing/correcting it.
-
 
 =head1 NAGIOS SERVICE CHECK CONFIGURATION NOTES
 
@@ -365,24 +367,26 @@ receive a notification for every match.
 
 =item 2.
 
-The notification options for the service should be set to not notify you
+The notification options for the service should not be set to notify you
 of recoveries for the check.  Since pattern matches in the log file will
 normally only be reported once, "recoveries" don't really apply.  (An
 exception might be if you are reading the whole file each time.)
 
 =item 3.
 
-If you have more than one service check reading the same log file, you
-must explicitly supply a seek file name using the -s option.  If you use
-the -s option explicitly you must always use a different seek file for
-each service check.  Otherwise one service check may start reading where
-another left off, which is likely not what you want (especially since
-the order in which they are run by Nagios is unpredictable).
+If you have more than one monitoring server and/or service check reading the
+same log file, you must explicitly supply a seek file name using the -s option.
+You must always use a different seek file for each service check, otherwise one
+service check may start reading where another left off, which is not likely to
+be what you want (especially since the order in which they are run by Nagios is
+unpredictable).  This is essential in clustered environments such as Icinga 2.
 
 =back
 
 Also note that many NRPE agents restrict the characters that they accept,
-which includes those commonly used in regular expressions.
+which includes those commonly used in regular expressions.  If you need to
+use use command arguments including forbidden characters, you must wrap them
+in a custom NRPE command.
 
 
 =head1 CHARACTER SET SUPPORT
@@ -404,13 +408,13 @@ looks wrong in Nagios, e.g. "--output-enc=latin1".
 
 The --input-enc option affects the interpretation of log files and search
 pattern files, but not seek files or custom parsing scripts (for which it's
-either not necessary or which take care of their own internal encoding).
+either not necessary or which must take care of their own internal encoding).
 
 Note that the encoding of the patterns passed from the command line by the
 shell (from Nagios, an NRPE agent, or by you while testing manually) must
 match the encoding specified by --input-enc.  You may have to use pattern
 files if this is not the case (such as parsing Windows UTF-16 files on a
-Linux system, whose shells normally uses UTF-8).
+Linux system, whose shell normally uses UTF-8).
 
 Please note that the quality of Unicode support varies somewhat between Perl
 versions.  Use at least Perl 5.8.1 and preferably 5.14 or higher if you need
@@ -491,7 +495,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.14';
+my $plugin_revision = '3.15';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -609,6 +613,8 @@ GetOptions (
 	"secure"		=> \$secure,
 	"A|and"			=> \$and,
 	"show-filename"		=> \$show_filename,
+	"R|restartcommand=s"	=> \$restart_command,
+	"M|returnmessage=s"	=> \$return_message,
 	"input-enc|encoding=s"	=> \$enc_in,
 	"output-enc=s"		=> \$enc_out,
 	"list-encodings"	=> \$list_enc,
@@ -617,8 +623,6 @@ GetOptions (
 	"h|help"		=> \$help,
 	"debug"			=> \$debug,
 	"manual"		=> sub { pod2usage(-exitval => $ERRORS{'OK'}, -verbose => 2) },
-	"R|restartcommand=s"            => \$restart_command,
-        "M|returnmessage=s"             => \$return_message,
 );
 
 # Set output encoding before we output anything
@@ -945,11 +949,8 @@ if (open(SEEK_FILE, "$seek_file")) {
 		# If the file hasn't grown since last time and a nodiff option was specified, stop here.
 		$diff_crit = 1 if ($diff_warn && $critical);
 		if ($seek_pos[0] == $size && $diff_crit) {
-		        if ($restart_command){
-			  print "$restart_command ";
-			}
+			print "$restart_command " if ($restart_command);
 			print "CRITICAL: Log file not written to since last check $return_message\n";
-			if 
 			exit $ERRORS{'CRITICAL'};
 		} elsif ($seek_pos[0] == $size && $diff_warn) {
 			print "WARNING: Log file not written to since last check\n";
@@ -1078,9 +1079,7 @@ print "debug: found $pattern_count maches, total lines $total, parse count $pars
 # If this was a nodiff check we just count the lines and stop
 if (!$re_pattern) {
 	if ($diff_crit && $total < $critical) {
-		if ($restart_command){
-			print "$restart_command ";
-		}
+		print "$restart_command " if ($restart_command);
 		print "CRITICAL: Only $total lines written since last check (expected at least $critical) $return_message\n";
 		exit $ERRORS{'CRITICAL'};
 	} elsif ($diff_warn && $total < $warning) {
@@ -1349,6 +1348,7 @@ sub print_usage () {
 	[--ok]|([-w warn_count] [-c crit_count] [--negate])
 	[--input-enc=encoding] [--output-enc=encoding] [--crlf]
 	[--missing=STATE [--missing-msg=message]]
+    [-R|--restartcommand] [-M|--returnmessage]
 
 \n";
 }
@@ -1496,6 +1496,16 @@ Output control:
     Output <number> lines of context before or after matched line; use -N for
     N lines before the match, +N for N lines after the match (if possible) or
     an unqualified number to get N lines before and after the match.
+-R, --restartcommand=<startup command>
+    If the the log was not written to since the last scan and the -D option was
+    used, prefix the status output with this string.  This is meant to be the
+    name of a control script or systemd service that can be used by an event
+    handler to restart the application the log file belongs to.
+-M, --returnmessage=<message>
+    If the the log was not written to since the last scan and the -D option was
+    used, append this message to the end of the service check output.  This can
+    be used to provide instructions to operators or links to documentation.
+    Make sure to use quotes to avoid problems.
 -e, --parse=<code>
 -E, --parse-file=<filename>
     Custom Perl code block to parse each matched line with, or an external
@@ -1511,8 +1521,6 @@ Output control:
     but you can parse it, and indeed you must use -C if you want to parse a
     line other than the current matching one.  In that case you should parse
     \@line_buffer instead of \$_.
---secure
-    Disable all custom eval code features.  Overrides the -e and -E options.
 -q, --quiet
     Suppress output of matched line(s) if state is OK.
 -Q, --no-header
@@ -1522,19 +1530,16 @@ Output control:
     if your are using custom parsing code and generate your own perfdata.
 --show-filename
     Print the name of the actual input file in the plugin output.
+
+Other options:
+
+--secure
+    Disable all custom eval code features.  Overrides the -e and -E options.
 --timeout=<seconds>
     Override the plugin time-out timer (by default $TIMEOUT seconds).  The plugin
     will return UNKNOWN if the plugin runs for more than this many seconds.
 --no-timeout
     Equivalent to --timeout=0.
- -R, --restartcommand=<startup command>
-    The startup script name under /etc/rc.d/init.d/ needed to restart the process
-    that is writing to this log file. This will be appended to the begging of the 
-    test output on CRITICAL errors for easy parsing by event handler scripts.
- -M, --returnmessage=<message>
-    A message to append to the end of the check output on a CRITICAL result.
-    This can be used to provide intructions on what to do when this check fails.
-    Make sure to use quotes to avoid problems
 
 
 Support information:
