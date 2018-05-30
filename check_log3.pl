@@ -495,7 +495,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.15';
+my $plugin_revision = '3.15a';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -589,6 +589,7 @@ GetOptions (
 	"w|warning=s"		=> \$warning,
 	"c|critical=s"		=> \$critical,
 	"i|case-insensitive"	=> \$case_insensitive,
+	"nodiff"			=> \$diff_warn,
 	"d|nodiff-warn"		=> \$diff_warn,
 	"D|nodiff-crit"		=> \$diff_crit,
 	"e|parse=s"		=> \$parse_pattern,
@@ -1371,7 +1372,7 @@ Log file control:
     generated there instead of in $tmpdir.
     If you specify the system's null device ($devnull), the entire log file
     will be read every time.
--m, --logfile-pattern=<expression>
+-m, --log-pattern=<expression>
     A glob(7) expression, used together with the -l option for selecting log
     files whose name is variable, such as time stamped or rotated logs.
     If you use this option, the -s option will be ignored unless it points to
@@ -1388,13 +1389,13 @@ Log file control:
 	\%w = week day (0-6), 0 is Sunday
 	\%j = day of year (000-365)
     Use the --timestamp option to refer to timestamps in the past.
--t, --logfile-select=most_recent|first_match|last_match
+-t, --log-select=most_recent|first_match|last_match
     How to further select amongst multiple files when using -m:
      - most_recent: select the most recently modified file
      - first_match: select the first match (sorting alphabetically)
      - last_match: select the last match (this is the default)
 --timestamp='(X months|weeks|days|hours|minutes|seconds)... [ago]'
-    Use this option to make the time stamp macro's in the -m expression refer
+    Use this option to make the time stamp macros in the -m expression refer
     to a time in the past, e.g. '1 day, 6 hours ago'.  The shortcuts 'now' and
     'yesterday' are also recognised.  The default is 'now'.
     If this expression is purely numerical it will be interpreted as seconds
@@ -1419,7 +1420,7 @@ Search pattern control:
 -f, --negpatternfile=<negpatternfile>
     Specifies a file with regular expressions which will all be skipped.
 -i, --case-insensitive
-    Do a case insensitive scan.
+    Do a case insensitive scan.  Note, this is bad for performance.
 
 Character set control:
 
@@ -1465,7 +1466,7 @@ Alerting control:
 --missing-ok
     Equivalent to --missing=OK (for backwards compatibility).
 --ok
-    Always return an OK status to Nagios.
+    Always return an OK status to Nagios, unless there was an I/O error.
 --negate
     Inverts the meaning of the -w and -c options, i.e. returns an alert if not
     at least this many matches are found.  (Note: this option is not useful in
@@ -1474,7 +1475,8 @@ Alerting control:
 Output control:
 
 -N, --report-max=<number>
-    Stop after matching a maximum of <number> times.
+    Stop after matching a maximum of <number> times.  The log may not be read
+    all the way to the end of the file when using this option.
 --report-only=<number>
     Output a maximum of <number> lines and skip the rest (move the seek pointer
     to the end of the file).  Takes precedence over --report-max.
@@ -1490,6 +1492,8 @@ Output control:
 -a, --output-all
     Output all matching lines instead of just the last one.  Note that the
     plugin output may be truncated if it exceeds 4KB (1KB when using NRPE).
+    Other agent software may impose other limits.  Note that you will lose
+    performance data if output is truncated.
     If used together with --report-max or --report-only, will affect output
     but not stopping/EOF seeking behaviour.
 -C, --context=[-|+]<number>
@@ -1507,7 +1511,7 @@ Output control:
     be used to provide instructions to operators or links to documentation.
     Make sure to use quotes to avoid problems.
 -e, --parse=<code>
--E, --parse-file=<filename>
+-E, --parsefile=<filename>
     Custom Perl code block to parse each matched line with, or an external
     script.  If specified directly with -e the code should probably be in
     curly brackets and quoted.  It will be executed as a Perl 'eval' block.
@@ -1529,7 +1533,8 @@ Output control:
     Suppress the standard performance data output from the plugin.  Use this
     if your are using custom parsing code and generate your own perfdata.
 --show-filename
-    Print the name of the actual input file in the plugin output.
+    Print the name of the actual input file in the plugin output.  Useful in
+    combination with dynamic filenames.
 
 Other options:
 
