@@ -87,14 +87,19 @@ can use the --timestamp option to tell the script to look for files with
 timestamps in the past (the default is the current date).
 
 When using -m, do not specify a seek file; it will be ignored unless it is
-/dev/null or a directory.  Also note that glob patterns are not the same as
-regular expressions (please let me know if you want support for that).
+/dev/null or a directory.  If you're really sure you want to specify a seek
+file together with a log pattern, use the -S option too.
+
+Also note that glob patterns are not the same as regular expressions (please
+let me know if you want support for that).
 
 If the -l option points to a directory, B<-m '*'> is assumed.
 
 To show the actual filename of the log file being read, use --show-filename.
 
 It is not currently possible to use multiple files as input to a single run.
+If you want that I recommend you use a wrapper script to iterate over the
+files you want.
 
 =head2 Alerting thresholds
 
@@ -495,7 +500,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.15a';
+my $plugin_revision = '3.15b';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -571,7 +576,7 @@ my $show_filename = undef;
 my $secure = undef;
 my $restart_command = '';
 my $return_message = '';
-
+my $force_seekfile;
 
 # If invoked with a path, strip the path from our name
 my ($prog_vol, $prog_dir, $prog_name) = File::Spec->splitpath($0);
@@ -582,6 +587,7 @@ GetOptions (
 	"m|log-pattern=s"	=> \$log_pattern,
 	"t|log-select=s"	=> \$log_select,
 	"s|seekfile=s"		=> \$seek_file,
+    "S|force-seekfile"	=> \$force_seekfile,
 	"p|pattern=s"		=> \@patterns,
 	"P|patternfile=s"       => \$pattern_file,
 	"n|negpattern=s"	=> \@negpatterns,
@@ -759,11 +765,15 @@ if (-d "$seek_file") {
 # This is not fatal but we should warn the user about it
 print "Warning: '$tmpdir' not writable, seek position will not be saved\n" if not -w "$tmpdir";
 
-# Seek files are always auto-generated for dynamic log files
+# Seek files are always auto-generated for dynamic log files...
 if ($log_pattern) {
-	print "debug: overriding seek file for dynamic filenames\n" if $debug;
 	if ($seek_file) {
-		undef $seek_file unless $seek_file eq $devnull;
+		# Unless forced explicitly, or redirected to the null device
+		unless ($force_seekfile or $seek_file eq $devnull) {
+			print "debug: generating seek file name for dynamic log filenames\n" if $debug;
+			# We'll auto-generate this later
+			undef $seek_file;
+		}
 	}
 }
 
@@ -1343,7 +1353,7 @@ sub print_usage () {
 
 	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
 	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir] [--show-filename]
-	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec])
+	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec]) [-S]
 	[-d] [-D] [-a] [-C {-|+}n] [-q] [-Q] ([-e '{ eval block }'|-E script_file]|--secure)
 	([-N|--report-max=N]|[--report-only=N])|([-1|--stop-first-match]|[--report-first-match])
 	[--ok]|([-w warn_count] [-c crit_count] [--negate])
@@ -1376,19 +1386,22 @@ Log file control:
     A glob(7) expression, used together with the -l option for selecting log
     files whose name is variable, such as time stamped or rotated logs.
     If you use this option, the -s option will be ignored unless it points to
-    either a directory or to the null device ($devnull).
+    either a directory or to the null device ($devnull); use -S to override
+    this behaviour.
     For selecting time stamped logs, you can use the following date(1)-like
     expressions, which by default refer to the current date and time:
 	\%Y = year
 	\%y = last 2 digits of year
 	\%m = month (01-12)
 	\%d = day of month (01-31)
-    	\%H = hour (00-23)
+	\%H = hour (00-23)
 	\%M = minute (00-59)
 	\%S = second (00-60)
 	\%w = week day (0-6), 0 is Sunday
 	\%j = day of year (000-365)
     Use the --timestamp option to refer to timestamps in the past.
+-S, --force-seekfile
+    Use the seek file specified with -s even though -m is also in effect.
 -t, --log-select=most_recent|first_match|last_match
     How to further select amongst multiple files when using -m:
      - most_recent: select the most recently modified file
