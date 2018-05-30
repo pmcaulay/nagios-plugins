@@ -944,7 +944,7 @@ if (open(SEEK_FILE, "$seek_file")) {
 	if ($seek_pos[0] && $seek_pos[0] != 0) {
 		# Compare seek position to actual file size.  If file size is smaller,
 		# then we just start from beginning i.e. the log was rotated.
-		print "debug: seek from $seek_pos[0] (eof = $size)\n" if $debug;
+		print "debug: previous seek position $seek_pos[0] (eof = $size)\n" if $debug;
 
 		# If the file hasn't grown since last time and a nodiff option was specified, stop here.
 		$diff_crit = 1 if ($diff_warn && $critical);
@@ -972,7 +972,7 @@ if (open(SEEK_FILE, "$seek_file")) {
 
 # Loop through every line of log file and check for pattern matches.
 # Count the number of pattern matches and save the output.
-print "debug: reading file...\n" if $debug;
+print "debug: reading file from position " . tell(LOG_FILE) . "\n" if $debug;
 while (<LOG_FILE>) {
 	my $line = $_;
 	my $negmatch = 0;
@@ -1348,7 +1348,7 @@ sub print_usage () {
 	[--ok]|([-w warn_count] [-c crit_count] [--negate])
 	[--input-enc=encoding] [--output-enc=encoding] [--crlf]
 	[--missing=STATE [--missing-msg=message]]
-    [-R|--restartcommand] [-M|--returnmessage]
+	[-R|--restartcommand] [-M|--returnmessage]
 
 \n";
 }
