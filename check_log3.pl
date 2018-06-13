@@ -87,8 +87,8 @@ can use the --timestamp option to tell the script to look for files with
 timestamps in the past (the default is the current date).
 
 When using -m, do not specify a seek file; it will be ignored unless it is
-/dev/null or a directory.  If you're really sure you want to specify a seek
-file together with a log pattern, use the -S option too.
+/dev/null or a directory.  To distinguish between service checks that read the
+same log files but e.g. for diffent patterns, use the -S option too.
 
 Also note that glob patterns are not the same as regular expressions (please
 let me know if you want support for that).
@@ -500,7 +500,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.15b';
+my $plugin_revision = '3.16';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -576,7 +576,7 @@ my $show_filename = undef;
 my $secure = undef;
 my $restart_command = '';
 my $return_message = '';
-my $force_seekfile;
+my $seekfile_id = '';
 
 # If invoked with a path, strip the path from our name
 my ($prog_vol, $prog_dir, $prog_name) = File::Spec->splitpath($0);
@@ -587,7 +587,7 @@ GetOptions (
 	"m|log-pattern=s"	=> \$log_pattern,
 	"t|log-select=s"	=> \$log_select,
 	"s|seekfile=s"		=> \$seek_file,
-    "S|force-seekfile"	=> \$force_seekfile,
+	"S|seekfile-id=s"	=> \$seekfile_id,
 	"p|pattern=s"		=> \@patterns,
 	"P|patternfile=s"       => \$pattern_file,
 	"n|negpattern=s"	=> \@negpatterns,
@@ -595,7 +595,7 @@ GetOptions (
 	"w|warning=s"		=> \$warning,
 	"c|critical=s"		=> \$critical,
 	"i|case-insensitive"	=> \$case_insensitive,
-	"nodiff"			=> \$diff_warn,
+	"nodiff"		=> \$diff_warn,
 	"d|nodiff-warn"		=> \$diff_warn,
 	"D|nodiff-crit"		=> \$diff_crit,
 	"e|parse=s"		=> \$parse_pattern,
@@ -732,6 +732,7 @@ if ($and) {
 } else {
 	$re_pattern = join('|', @patterns);
 }
+
 ($re_pattern) || usage("Regular expression not specified.\n") unless ($diff_warn || $diff_crit);
 print "debug: looking for '$re_pattern'\n" if $debug;
 
@@ -768,8 +769,8 @@ print "Warning: '$tmpdir' not writable, seek position will not be saved\n" if no
 # Seek files are always auto-generated for dynamic log files...
 if ($log_pattern) {
 	if ($seek_file) {
-		# Unless forced explicitly, or redirected to the null device
-		unless ($force_seekfile or $seek_file eq $devnull) {
+		# Unless redirected to the null device
+		unless ($seek_file eq $devnull) {
 			print "debug: generating seek file name for dynamic log filenames\n" if $debug;
 			# We'll auto-generate this later
 			undef $seek_file;
@@ -811,10 +812,12 @@ if ($log_pattern) {
 		}
 
 		my ($sec, $min, $hour, $mday, $mon, $year, $wday, $yday, $isdst) = localtime($timestamp);
+
 		# Adjust some values for user-friendliness
 		$year += 1900;
 		$mon += 1;
 		my $yr = sprintf("%02d", $year % 100);
+
 		# Add padding zeros
 		$yday = sprintf("%03d", $yday);
 		foreach my $t (($sec, $min, $hour, $mday, $mon)) {
@@ -927,15 +930,29 @@ open (LOG_FILE, $mode, "$log_file") || ioerror("Unable to open '$log_file': $!")
 if (not $seek_file) {
 	# Break down $tmpdir in case it contains a volume name (for Win32)
 	my ($tmp_vol, $tmp_dirs, $no_file) = File::Spec->splitpath($tmpdir, 1);
+
 	# Generate seek file name based on the log file path and filename
 	my ($log_vol, $log_dir, $basename) = File::Spec->splitpath($log_file);
+	# Determine our local directory seperator
 	my $dir_sep = File::Spec->catfile('', '');
 	# If the directory separator turns out to be a backslash, escape it (for Win32)
 	$dir_sep = '\\\\' if $dir_sep eq '\\';
-	# Flatten directory separators using hyphens
+
+	# Flatten directory separators using hyphens, strip the leading one
 	(my $seek_prefix = $log_dir) =~ s#$dir_sep#-#g;
 	$seek_prefix =~ s#^-##;
-	$seek_file = File::Spec->catpath($tmp_vol, $tmp_dirs, $seek_prefix . $basename . '.seek');
+
+	# Add a custom identifier, if specified
+	my $seek_suffix = '';
+	if ($seekfile_id) {
+	    # Sanitise it so it can be safely added to a filename
+	    $seekfile_id =~ s#$dir_sep#-#g;
+	    $seekfile_id =~ s#\\##g;
+	    $seek_suffix = '-' . $seekfile_id;
+	}
+
+	# Generate the seek file path and filename
+	$seek_file = File::Spec->catpath($tmp_vol, $tmp_dirs, $seek_prefix . $basename . $seek_suffix . '.seek');
 	print "debug: using auto seek file '$seek_file'\n" if $debug;
 } else {
 	# If you specify one manually we assume you know what form it's supposed to take
@@ -1353,7 +1370,7 @@ sub print_usage () {
 
 	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
 	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir] [--show-filename]
-	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec]) [-S]
+	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec] [-S string])
 	[-d] [-D] [-a] [-C {-|+}n] [-q] [-Q] ([-e '{ eval block }'|-E script_file]|--secure)
 	([-N|--report-max=N]|[--report-only=N])|([-1|--stop-first-match]|[--report-first-match])
 	[--ok]|([-w warn_count] [-c crit_count] [--negate])
@@ -1386,22 +1403,24 @@ Log file control:
     A glob(7) expression, used together with the -l option for selecting log
     files whose name is variable, such as time stamped or rotated logs.
     If you use this option, the -s option will be ignored unless it points to
-    either a directory or to the null device ($devnull); use -S to override
-    this behaviour.
+    either a directory or to the null device ($devnull).
     For selecting time stamped logs, you can use the following date(1)-like
     expressions, which by default refer to the current date and time:
-	\%Y = year
-	\%y = last 2 digits of year
-	\%m = month (01-12)
-	\%d = day of month (01-31)
-	\%H = hour (00-23)
-	\%M = minute (00-59)
-	\%S = second (00-60)
-	\%w = week day (0-6), 0 is Sunday
-	\%j = day of year (000-365)
+	  \%Y = year
+	  \%y = last 2 digits of year
+	  \%m = month (01-12)
+	  \%d = day of month (01-31)
+	  \%H = hour (00-23)
+ 	  \%M = minute (00-59)
+  	  \%S = second (00-60)
+	  \%w = week day (0-6), 0 is Sunday
+	  \%j = day of year (000-365)
     Use the --timestamp option to refer to timestamps in the past.
--S, --force-seekfile
-    Use the seek file specified with -s even though -m is also in effect.
+	Note that the plugin only ever selects one log file to read.
+	See also the -S option.
+-S, --seekfile-id=<string>
+	For checks using -m, add this string to the generated seek file name to
+	make different service checks using the same log patterns unique.
 -t, --log-select=most_recent|first_match|last_match
     How to further select amongst multiple files when using -m:
      - most_recent: select the most recently modified file
