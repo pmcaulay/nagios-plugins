@@ -24,14 +24,18 @@ See L<below|/EXAMPLES> for some examples.
 
 Originally written by Aaron Bostick (abostick@mydoconline.com)
 Rewritten by Peter Mc Aulay and Tom Wuyts
-The --output-all feature was contributed by Ian Gibbs 
+
+The --output-all feature was contributed by Ian Gibbs
+
 The --and feature was contributed by Wesley Moore
+
 The --report-only feature was contributed by Andy Speagle
+
 The -M|returnmessage and -R|restartcommand features were added by Noah Guttman <noah.guttman@gmail.com>
 
 Released under the terms of the GNU General Public Licence v2.0
 
-Last updated 2016-10-06 by Peter Mc Aulay <peter@zeron.be>
+Last updated 2018-06-13 by Peter Mc Aulay <peter@zeron.be>
 
 Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log
 plugin this is modeled after.
