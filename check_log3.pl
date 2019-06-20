@@ -33,9 +33,11 @@ The --report-only feature was contributed by Andy Speagle
 
 The -M|returnmessage and -R|restartcommand features were added by Noah Guttman <noah.guttman@gmail.com>
 
+The --ultraq option was contributed by Minh Tran
+
 Released under the terms of the GNU General Public Licence v2.0
 
-Last updated 2018-06-13 by Peter Mc Aulay <peter@zeron.be>
+Last updated 2019-06-20 by Peter Mc Aulay <peter@zeron.be>
 
 Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log
 plugin this is modeled after.
@@ -504,7 +506,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.16';
+my $plugin_revision = '3.16.1';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -565,6 +567,7 @@ my $context;
 my $negate;
 my $perfdata;
 my $quiet;
+my $ultraq;
 my $noheader;
 my $noperfdata;
 my $version;
@@ -619,6 +622,7 @@ GetOptions (
 	"no-timeout"		=> \$no_timeout,
 	"timestamp=s"		=> \$timestamp,
 	"q|quiet"		=> \$quiet,
+        "ultraq"                => \$ultraq,
 	"Q|no-header"		=> \$noheader,
 	"no-perfdata"		=> \$noperfdata,
 	"secure"		=> \$secure,
@@ -1262,6 +1266,9 @@ if ($endresult == $ERRORS{'CRITICAL'}) {
 # Print output and exit
 #
 
+# Suppress all output if ultra quiet mode and state is ok
+exit $endresult if ($ultraq && $endresult == 0);
+
 # Reinstate percentage suffix if appropriate
 $warning .= '%' if $warnpct;
 $critical .= '%' if $critpct;
@@ -1375,7 +1382,7 @@ sub print_usage () {
 	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
 	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir] [--show-filename]
 	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec] [-S string])
-	[-d] [-D] [-a] [-C {-|+}n] [-q] [-Q] ([-e '{ eval block }'|-E script_file]|--secure)
+        [-d] [-D] [-a] [-C {-|+}n] [-q] [--ultraq] [-Q] ([-e '{ eval block }'|-E script_file]|--secure)
 	([-N|--report-max=N]|[--report-only=N])|([-1|--stop-first-match]|[--report-first-match])
 	[--ok]|([-w warn_count] [-c crit_count] [--negate])
 	[--input-enc=encoding] [--output-enc=encoding] [--crlf]
@@ -1563,6 +1570,8 @@ Output control:
     \@line_buffer instead of \$_.
 -q, --quiet
     Suppress output of matched line(s) if state is OK.
+--ultraq
+    Suppress all output if state is OK, this option is suitable for cronjobs.
 -Q, --no-header
     Suppress leading state and statistics info from output.
 --no-perfdata
