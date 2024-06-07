@@ -8,7 +8,7 @@
 
 check_log3.pl - a regular expression based log file parser plugin for Nagios and Nagios-like monitoring systems.
 
-Tested on Linux, Windows, AIX and Solaris.
+Tested on Linux, Windows, AIX and Solaris.  Works with Nagios, Icinga 1 and 2, and Prometheus script_exporter.
 
 =head1 SYNOPSIS
 
@@ -37,14 +37,13 @@ The --ultraq option was contributed by Minh Tran
 
 Released under the terms of the GNU General Public Licence v2.0
 
-Last updated 2019-06-20 by Peter Mc Aulay <peter@zeron.be>
+Last updated 2024-06-07 by Peter Mc Aulay <pmcaulay@evilgeek.net>
 
-Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log plugin this is modeled after.
+Thanks and acknowledgements to Ethan Galstad for Nagios and the check_log plugin this is modelled after.
 
 =head1 DESCRIPTION
 
-This plugin will scan arbitrary text files looking for regular expression
-matches.
+This plugin will scan arbitrary text files looking for regular expression matches.
 
 =head2 Specifying filters
 
@@ -56,7 +55,9 @@ Pattern matching can be either case sensitive or case insensitive.  The -i optio
 
 =head2 Seek position
 
-A temporary file is used to store the seek byte position of the last scan.  Specifying this file is optional, if you don't specify a filename it will be auto-generated.  To read the entire file each run, use the null device (NUL on Win32, /dev/null on Unix) as the seek file.  If you specify a directory, the seek file will be written to that directory instead of in /tmp.
+A temporary file is used to store the seek byte position of the last scan.  Specifying this file is optional, if you don't specify a filename it will be auto-generated.  To read the entire file each run, use your system's null device (NUL on Win32, /dev/null on Unix) as the seek file.  If you specify a directory, the seek file will be written to that directory instead of in /tmp.
+
+Use the --freshness option to configure the seek file to have a specific lifetime instead of being overwritten every time; this is for environments where the log wacher server gets polled by multiple servers (such as in a clustered environment).
 
 =head2 Selecting among multiple files
 
@@ -246,6 +247,20 @@ Note that the encoding of the patterns passed from the command line by the shell
 Please note that the quality of Unicode support varies somewhat between Perl versions.  Use at least Perl 5.8.1 and preferably 5.14 or higher if you need these features.
 
 
+=head1 CLUSTERED ENVIRONMENTS
+
+In a clustered or HA environment, where multiple monitoring servers may check the service but only one server will retain the "official" state, you may need to use the --freshness option to ensure that alert states persist long enough to be detected.  You will need this when using a seek file (which is the default), because the seek file gets overwritten on every run and you may miss alerts if not every problem state is reported immediately.  A freshness setting identical to your service check interval is ideal, e.g. "--freshness=300".
+
+
+=head1 PROMETHEUS SUPPORT
+
+You can use this plugin with Prometheus Script Exporter by using --prometheus option.  This option will cause the performance data to be output as Prometheus metrics and will suppress normal output.  (The check output will be returned as a comment but not reported to Prometheus, as it does not support string metrics.  By default the plugin will return the "check_result", "lines" and "parsed" metrics.
+
+Since Prometheus polls services more frequently than Nagios, you will want to set a short timeout, e.g. "--timeout=10".
+
+If your environment has multiple Prometheus servers, you will also have to use the --freshness option (see the CLUSTERED ENVIRONMENTS section, above).
+
+
 =head1 EXAMPLES
 
 Return WARNING if errors occur in the system log, but ignore the ones from the NRPE agent itself:
@@ -311,7 +326,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.16.2';
+my $plugin_revision = '3.17.0';
 
 # Predeclare subroutines
 sub print_usage ();
@@ -321,6 +336,7 @@ sub print_encodings ();
 sub ioerror;
 sub add_to_buffer;
 sub read_next;
+sub print_final;
 
 # Initialise variables and defaults
 my $tmpdir = File::Spec->tmpdir();
@@ -332,11 +348,13 @@ my $size;
 my $log_select = 'last_match';
 my @logfiles;
 my $seek_file = '';
+my $seek_age;
 my $warning = '1';
 my $critical = '0';
 my $max = '',
 my $diff_warn = '';
 my $diff_crit = '';
+my $diff_errormsg = '';
 my @patterns;
 my @negpatterns;
 my $re_pattern = '';
@@ -389,9 +407,14 @@ my $secure = undef;
 my $restart_command = '';
 my $return_message = '';
 my $seekfile_id = '';
+my $freshness = 0;
+my $prometheus;
 
 # If invoked with a path, strip the path from our name
 my ($prog_vol, $prog_dir, $prog_name) = File::Spec->splitpath($0);
+
+# Save our command line for debugging (here because GetOptions() consumes @ARGV)
+my $commandline = join " ", $0, @ARGV;
 
 # Grab options from command line
 GetOptions (
@@ -427,7 +450,7 @@ GetOptions (
 	"no-timeout"		=> \$no_timeout,
 	"timestamp=s"		=> \$timestamp,
 	"q|quiet"		=> \$quiet,
-        "ultraq"                => \$ultraq,
+	"ultraq"		=> \$ultraq,
 	"Q|no-header"		=> \$noheader,
 	"no-perfdata"		=> \$noperfdata,
 	"secure"		=> \$secure,
@@ -439,6 +462,8 @@ GetOptions (
 	"output-enc=s"		=> \$enc_out,
 	"list-encodings"	=> \$list_enc,
 	"crlf"			=> \$crlf,
+	"freshness=i"		=> \$freshness,
+	"prometheus"		=> \$prometheus,
 	"v|V|version"		=> \$version,
 	"h|help"		=> \$help,
 	"debug"			=> \$debug,
@@ -448,22 +473,23 @@ GetOptions (
 # Set output encoding before we output anything
 if ($enc_out) {
 	binmode STDOUT, ":encoding($enc_out)" if $enc_out;
-	print "debug: using $enc_out output encoding\n" if $debug;
+	print "# debug: using $enc_out output encoding\n" if $debug;
 } else {
 	# Safe default
 	binmode STDOUT, ":encoding(UTF-8)";
 }
 
-print "debug: check_log3.pl version $plugin_revision starting\n" if $debug;
-print "debug: warning=$warning, critical=$critical\n" if $debug;
+print "# debug: check_log3.pl version $plugin_revision starting\n" if $debug;
+print "# debug: command line: $commandline\n" if $debug;
+print "# debug: enable output suitable for Prometheus\n" if ($debug and $prometheus);
 
 #
 # Parse input
 #
 
-($version) && print_version ();
-($help) && print_help ();
-($list_enc) && print_encodings ();
+($version) && print_version();
+($help) && print_help();
+($list_enc) && print_encodings();
 
 # These options are mandatory
 ($log_file) || usage("Log file not specified.\n");
@@ -478,15 +504,14 @@ $timeout = $TIMEOUT if not defined $timeout;
 $timeout = 0 if $no_timeout;
 unless ($timeout) {
 	$SIG{'ALRM'} = sub {
-		print "Plug-in error: time out after $timeout seconds\n";
-		exit $ERRORS{'UNKNOWN'};
+		print_final("Plug-in error: time out after $timeout seconds\n", $ERRORS{'UNKNOWN'});
 	};
 	alarm($timeout);
 }
-print "debug: plugin timeout set to $timeout seconds\n" if $debug;
+print "# debug: plugin timeout set to $timeout seconds\n" if $debug;
 
 # Suppress custom eval code when using --secure
-($secure) && print "debug: secure mode, not loading any external code\n" if $debug;
+($secure) && print "# debug: secure mode, not loading any external code\n" if $debug;
 ($secure) && undef $parse_pattern;
 ($secure) && undef $parse_file;
 
@@ -500,8 +525,8 @@ $match_count = 1 if $stop_first_match;
 $match_count = 1 if $report_first_only;
 $skip_eof_when_done = 1 if $report_first_only;
 
-print "debug: limit output to $match_count matches\n" if ($debug && $match_count);
-print "debug: skipping to EOF after $match_count matches\n" if ($debug && $skip_eof_when_done);
+print "# debug: limit output to $match_count matches\n" if ($debug && $match_count);
+print "# debug: skipping to EOF after $match_count matches\n" if ($debug && $skip_eof_when_done);
 
 # Determine line buffer characteristics
 if ($context && $context =~ /\+(\d+)/) {
@@ -512,12 +537,12 @@ if ($context && $context =~ /\+(\d+)/) {
 	$read_ahead = $1;
 	$read_back = $1 + 1;
 }
-print "debug: using line buffer: $read_back back, $read_ahead ahead\n" if $debug;
+print "# debug: using line buffer: $read_back back, $read_ahead ahead\n" if $debug;
 
 # PerlIO encoding layer to use when reading input files - logs and pattern files
 # Not applied to seek files or Perl scripts (custom eval code)
 if ($enc_in) {
-	print "debug: using $enc_in input encoding\n" if $debug;
+	print "# debug: using $enc_in input encoding\n" if $debug;
 	$mode = "<:encoding($enc_in)";
 } else {
 	# Use system default
@@ -527,13 +552,13 @@ if ($enc_in) {
 # Translate CR/LF (MS-DOS line endings) to Unix newlines
 # Not the default for performance reasons
 if ($crlf) {
-	print "debug: translating CRLF line endings\n" if $debug;
+	print "# debug: translating CRLF line endings\n" if $debug;
 	$mode .= ":crlf" 
 }
 
 # If we have a pattern file, read it and construct a pattern of the form 'line1|line2|line3|...'
 if ($pattern_file) {
-	print "debug: using pattern file '$pattern_file'\n" if $debug;
+	print "# debug: using pattern file '$pattern_file'\n" if $debug;
 	open (PATFILE, $mode, "$pattern_file") || ioerror("Unable to open '$pattern_file': $!");
 	chomp(@patterns = <PATFILE>);
 	close(PATFILE);
@@ -547,11 +572,11 @@ if ($and) {
 }
 
 ($re_pattern) || usage("Regular expression not specified.\n") unless ($diff_warn || $diff_crit);
-print "debug: looking for '$re_pattern'\n" if $debug;
+print "# debug: looking for '$re_pattern'\n" if $debug;
 
 # If we have an ignore/whitelist file, read it
 if ($negpatternfile) {
-	print "debug: using negpattern file '$negpatternfile'\n" if $debug;
+	print "# debug: using negpattern file '$negpatternfile'\n" if $debug;
 	open (PATFILE, $mode, "$negpatternfile") || ioerror("Unable to open '$negpatternfile': $!");
 	chomp(@negpatterns = <PATFILE>);
 	close(PATFILE);
@@ -560,7 +585,7 @@ if ($negpatternfile) {
 # If we have a custom code file, read it
 # Note that since this is Perl code we don't force an encoding on it
 if ($parse_file) {
-	print "debug: using parse file '$parse_file'\n" if $debug;
+	print "# debug: using parse file '$parse_file'\n" if $debug;
 	open (EVALFILE, "$parse_file") || ioerror("Unable to open '$parse_file': $!");
 	while (<EVALFILE>) {
 		$parse_pattern .= $_;
@@ -571,7 +596,7 @@ if ($parse_file) {
 # If -s points to a directory we take that as the new $tmpdir and auto-generate the seek filename
 if (-d "$seek_file") {
 	$tmpdir = $seek_file;
-	print "debug: using seek dir '$tmpdir'\n" if $debug;
+	print "# debug: using seek dir '$tmpdir'\n" if $debug;
 	# We'll auto-generate this later
 	undef $seek_file;
 }
@@ -584,12 +609,14 @@ if ($log_pattern) {
 	if ($seek_file) {
 		# Unless redirected to the null device
 		unless ($seek_file eq $devnull) {
-			print "debug: generating seek file name for dynamic log filenames\n" if $debug;
+			print "# debug: generating seek file name for dynamic log filenames\n" if $debug;
 			# We'll auto-generate this later
 			undef $seek_file;
 		}
 	}
 }
+
+print "# debug: warning=$warning, critical=$critical\n" if $debug;
 
 #
 # Find and open the files
@@ -600,14 +627,14 @@ if ($log_pattern) {
 if ($log_pattern) {
 	# Timestamped filenames support
 	if ($log_pattern =~ /%/) {
-		print "debug: enabling timestamp substitutions\n" if $debug;
+		print "# debug: enabling timestamp substitutions\n" if $debug;
 
 		# Timestamp can be expressed as 'X months|weeks|days|hours|minutes|seconds ... [ago]'
 		# or as seconds after the epoch (note, this is not validated for correctness)
 		if ($timestamp =~ /\D/) {
 			# Safe fall-back
 			if ($timestamp !~ /(sec|min|hour|day|week|mon|now|yesterday)/i) {
-				print "debug: timestamp '$timestamp' not valid, using 'now'\n" if $debug;
+				print "# debug: timestamp '$timestamp' not valid, using 'now'\n" if $debug;
 				$timestamp = time;
 			} else {
 				my $newtimestamp;
@@ -619,7 +646,7 @@ if ($log_pattern) {
 				if (my ($t) = ($timestamp =~ /(\d+) hour/i)) { $newtimestamp = time - ($t * 3600); }
 				if (my ($t) = ($timestamp =~ /(\d+) min/i)) { $newtimestamp = time - ($t * 60); }
 				if (my ($t) = ($timestamp =~ /(\d+) sec/i)) { $newtimestamp = time - $t; }
-				print "debug: new reference timestamp: " . localtime($newtimestamp) . "\n" if $debug;
+				print "# debug: new reference timestamp: " . localtime($newtimestamp) . "\n" if $debug;
 				$timestamp = $newtimestamp;
 			}
 		}
@@ -653,7 +680,7 @@ if ($log_pattern) {
 	# Normalise path
 	my ($vol, $dir, $file) = File::Spec->splitpath($log_file);
 	my $logprefix = File::Spec->catpath($vol, $dir, $file);
-	print "debug: looking for files matching '$log_file$log_pattern'\n" if $debug;
+	print "# debug: looking for files matching '$log_file$log_pattern'\n" if $debug;
 	@logfiles = bsd_glob("$logprefix$log_pattern");
 
 # Only if not using -m
@@ -661,7 +688,7 @@ if ($log_pattern) {
 	# Normalise path
 	my ($vol, $dir, $file) = File::Spec->splitpath($log_file, 1);
 	my $tmplogpath = File::Spec->catpath($vol, $dir, '*');
-	print "debug: log_file is a directory, assuming '$tmplogpath'\n" if $debug;
+	print "# debug: log_file is a directory, assuming '$tmplogpath'\n" if $debug;
 	@logfiles = bsd_glob("$tmplogpath");
 }
 
@@ -675,9 +702,9 @@ if (@logfiles) {
 	# Refine further with -t if there is more than one match
 	if (scalar(@logfiles) > 1) {
 		if ($debug) {
-			print "debug: found " . scalar(@logfiles) . " files matching selection:\n";
+			print "# debug: found " . scalar(@logfiles) . " files matching selection:\n";
 			foreach (@logfiles) {
-				print "debug:     $_\n";
+				print "# debug:     $_\n";
 			}
 		}
 
@@ -685,51 +712,50 @@ if (@logfiles) {
 		my @sorted = sort(@logfiles);
 		$log_select = "last_match" if not $log_select;
 		if ($log_select =~ /last_match/i) {
-			print "debug: picking last match\n" if $debug;
+			print "# debug: picking last match\n" if $debug;
 			$log_file = pop(@sorted);
 		} elsif ($log_select =~ /first_match/i) {
-			print "debug: picking first match\n" if $debug;
+			print "# debug: picking first match\n" if $debug;
 			$log_file = $sorted[0];
 		# By mtime: stat each file and keep the most recent one
 		} elsif ($log_select =~ /most_recent/i) {
-			print "debug: picking most recent match\n" if $debug;
+			print "# debug: picking most recent match\n" if $debug;
 			my $latest_mtime = 0;
 			foreach my $f (@sorted) {
 				my $timestamp = (stat("$f"))[9];
-				print "debug: considering '$f' ($timestamp)\n" if $debug;
+				print "# debug: considering '$f' ($timestamp)\n" if $debug;
 				if ($timestamp >= $latest_mtime) {
 					$latest_mtime = $timestamp;
 					$log_file = $f;
 				}
 			}
-			print "debug: '$log_file' is most recent\n" if $debug;
+			print "# debug: '$log_file' is most recent\n" if $debug;
 		# Safe fall-back
 		} else {
-			print "debug: '$log_select' not supported, using default\n" if $debug;
+			print "# debug: '$log_select' not supported, using default\n" if $debug;
 			$log_file = pop(@sorted);
 		}
 
 	} elsif (scalar(@logfiles) == 1) {
 		# Exact match
-		print "debug: only one matching file\n" if $debug;
+		print "# debug: only one matching file\n" if $debug;
 		$log_file = $logfiles[0];
 	} else {
 		# Set contained objects, but none of them are files
-		print "debug: no matching files found, trying just '$log_file'\n" if $debug;
+		print "# debug: no matching files found, trying just '$log_file'\n" if $debug;
 	}
 
 } else {
 	# Glob returned nothing
-	print "debug: no multiple match or set is empty, trying just '$log_file'\n" if $debug;
+	print "# debug: no multiple match or set is empty, trying just '$log_file'\n" if $debug;
 }
 
 # Open the log file - only here can errors be fatal
-print "debug: using log file '$log_file'\n" if $debug;
+print "# debug: using log file '$log_file'\n" if $debug;
 if (! -f "$log_file") {
 	if ($missing) {
 		# Custom error message & state
-		print "$missing_msg\n";
-		exit $ERRORS{uc($missing)};
+		print_final("$missing_msg\n", $ERRORS{uc($missing)});
 	} else {
 		# Standard error message
 		my $errstr = "Cannot read '$log_file'";
@@ -766,35 +792,39 @@ if (not $seek_file) {
 
 	# Generate the seek file path and filename
 	$seek_file = File::Spec->catpath($tmp_vol, $tmp_dirs, $seek_prefix . $basename . $seek_suffix . '.seek');
-	print "debug: using auto seek file '$seek_file'\n" if $debug;
+	print "# debug: using auto seek file '$seek_file'\n" if $debug;
 } else {
 	# If you specify one manually we assume you know what form it's supposed to take
-	print "debug: using manual seek file '$seek_file'\n" if $debug;
+	print "# debug: using manual seek file '$seek_file'\n" if $debug;
 }
 
+print "# debug: seek file freshness is $freshness seconds\n" if $debug;
+
 # Get size of log file
-my @stat = stat(LOG_FILE);
-$size = $stat[7];
+$size = (stat(LOG_FILE))[7];
 
 # Try to open seek file.  If open fails, we seek from beginning of file by default.
 if (open(SEEK_FILE, "$seek_file")) {
 	chomp(my @seek_pos = <SEEK_FILE>);
+	# Get mtime of seek file (for freshness check)
+	$seek_age = time - (stat(SEEK_FILE))[9];
+	print "# debug: seek file mtime is $seek_age seconds old\n" if $debug;
 	close(SEEK_FILE);
 
 	# If file is empty, no need to seek
 	if ($seek_pos[0] && $seek_pos[0] != 0) {
 		# Compare seek position to actual file size.  If file size is smaller, then we just start from the beginning i.e. the log was rotated.
-		print "debug: previous seek position $seek_pos[0] (eof = $size)\n" if $debug;
+		print "# debug: previous seek position $seek_pos[0] (eof = $size)\n" if $debug;
 
 		# If the file hasn't grown since last time and a nodiff option was specified, stop here.
 		$diff_crit = 1 if ($diff_warn && $critical);
 		if ($seek_pos[0] == $size && $diff_crit) {
-			print "$restart_command " if ($restart_command);
-			print "CRITICAL: Log file not written to since last check $return_message\n";
-			exit $ERRORS{'CRITICAL'};
+			# Prepend restart_command to output on critical alerts (i.e. heartbeat failure)
+			$diff_errormsg = "$restart_command " if ($restart_command);
+			$diff_errormsg .= "CRITICAL: Log file not written to since last check $return_message\n";
+			print_final($diff_errormsg, $ERRORS{'CRITICAL'});
 		} elsif ($seek_pos[0] == $size && $diff_warn) {
-			print "WARNING: Log file not written to since last check\n";
-			exit $ERRORS{'WARNING'};
+			print_final("WARNING: Log file not written to since last check\n", $ERRORS{'WARNING'});
 		}
 
 		# Seek to where we stopped reading before
@@ -803,7 +833,7 @@ if (open(SEEK_FILE, "$seek_file")) {
 		}
 	}
 } else {
-	print "debug: cannot open seek file, first time reading this file\n" if $debug;
+	print "# debug: cannot open seek file, first time reading this file?\n" if $debug;
 }
 
 #
@@ -812,7 +842,7 @@ if (open(SEEK_FILE, "$seek_file")) {
 
 # Loop through every line of log file and check for pattern matches.
 # Count the number of pattern matches and save the output.
-print "debug: reading file from position " . tell(LOG_FILE) . "\n" if $debug;
+print "# debug: reading file from position " . tell(LOG_FILE) . "\n" if $debug;
 while (<LOG_FILE>) {
 	my $line = $_;
 	my $negmatch = 0;
@@ -896,20 +926,32 @@ while (<LOG_FILE>) {
 	}
 }
 
-# Overwrite log seek file and print the byte position we have seeked to.
-open(SEEK_FILE, ">$seek_file") || ioerror("Unable to open '$seek_file' for writing: $!");
-if ($skip_eof_when_done) {
-	# Ignore rest of file up to EOF
-	print SEEK_FILE $size;
-} else {
-	print SEEK_FILE tell(LOG_FILE);
-}
-
-# Close files
-close(SEEK_FILE);
+# Save log position and close the file
+my $seek_offset = tell(LOG_FILE);
 close(LOG_FILE);
 
-print "debug: found $pattern_count maches, total lines $total, parse count $parse_count, limits: warn $warning crit $critical\n" if $debug;
+# Overwrite log seek file with the byte position we have reached, if configured
+unless ($seek_file eq $devnull) {
+	# If the seek file exists, overwrite only if old enough
+	if (!$seek_age || $seek_age > $freshness) {
+		open(SEEK_FILE, ">$seek_file") || ioerror("Unable to open '$seek_file' for writing: $!");
+		if ($skip_eof_when_done) {
+			# Ignore rest of file up to EOF
+			print "# debug: skip to EOF: update seek position to $size\n" if $debug;
+			print SEEK_FILE $size;
+		} else {
+			print "# debug: update seek position to $seek_offset\n" if $debug;
+			print SEEK_FILE $seek_offset;
+		}
+		close(SEEK_FILE);
+	} else {
+		print "# debug: not overwriting seek file as not older than $freshness seconds\n" if $debug;
+	}
+} else {
+	print "# debug: not writing seek position to null device\n" if $debug;
+}
+
+print "# debug: found $pattern_count maches, total lines $total, parse count $parse_count, limits: warn $warning crit $critical\n" if $debug;
 
 #
 # Compute exit code, terminate if no thresholds were exceeded
@@ -919,15 +961,14 @@ print "debug: found $pattern_count maches, total lines $total, parse count $pars
 # If this was a nodiff check we just count the lines and stop
 if (!$re_pattern) {
 	if ($diff_crit && $total < $critical) {
-		print "$restart_command " if ($restart_command);
-		print "CRITICAL: Only $total lines written since last check (expected at least $critical) $return_message\n";
-		exit $ERRORS{'CRITICAL'};
+		# Prepend restart_command to output on critical alerts (i.e. heartbeat failure)
+		$diff_errormsg = "$restart_command " if ($restart_command);
+		$diff_errormsg .= "CRITICAL: Only $total lines written since last check (expected at least $critical) $return_message\n";
+		print_final($diff_errormsg, $ERRORS{'CRITICAL'});
 	} elsif ($diff_warn && $total < $warning) {
-		print "WARNING: Only $total lines written since last check (expected at least $warning)\n";
-		exit $ERRORS{'WARNING'};
+		print_final("WARNING: Only $total lines written since last check (expected at least $warning)\n", $ERRORS{'WARNING'});
 	} elsif ($diff_warn or $diff_crit) {
-		print "OK: $total lines written since last check\n";
-		exit $ERRORS{'OK'};
+		print_final("OK: $total lines written since last check\n", $ERRORS{'OK'});
 	}
 }
 
@@ -962,16 +1003,16 @@ if ($critical =~ /%/) {
 	$critical =~ s/%//g;
 }
 
-print "debug: ", $warnpct ? "warnpct = $warnpct " : " ", $critpct ? "critpct = $critpct\n" : "\n" if ($debug && ($warnpct || $critpct));
+print "# debug: ", $warnpct ? "warnpct = $warnpct " : " ", $critpct ? "critpct = $critpct\n" : "\n" if ($debug && ($warnpct || $critpct));
 
 # Inverting the thresolds implies --negate
-print "debug: thresholds inverted, assuming --negate\n" if ($debug && (($warning && $critical) && $warning > $critical));
+print "# debug: thresholds inverted, assuming --negate\n" if ($debug && (($warning && $critical) && $warning > $critical));
 $negate = 1 if ($warning && $critical) && $warning > $critical;
 
 # --negate inverts the compare op
 my $cmp = '>=';
 $cmp = '<' if $negate;
-print "debug: inverting result due to --negate\n" if ($debug && $negate);
+print "# debug: inverting result due to --negate\n" if ($debug && $negate);
 
 # Warning?
 if ($warning > 0) {
@@ -979,7 +1020,7 @@ if ($warning > 0) {
 	if ($warnpct) {
 		if (eval "$warnpct $cmp $warning") {
 			$endresult = $ERRORS{'WARNING'};
-			print "debug: warnpct $cmp warning\n" if $debug;
+			print "# debug: warnpct $cmp warning\n" if $debug;
 		} else {
 			$endresult = $ERRORS{'OK'};
 		}
@@ -987,14 +1028,14 @@ if ($warning > 0) {
 	} elsif ($parse_pattern) {
 		if (eval "$parse_count $cmp $warning") {
 			$endresult = $ERRORS{'WARNING'};
-			print "debug: parse_count $cmp warning\n" if $debug;
+			print "# debug: parse_count $cmp warning\n" if $debug;
 		} else {
 			$endresult = $ERRORS{'OK'};
 		}
 	# Plain pattern matching
 	} elsif (eval "$pattern_count $cmp $warning") {
 			$endresult = $ERRORS{'WARNING'};
-			print "debug: pattern_count $cmp warning\n" if $debug;
+			print "# debug: pattern_count $cmp warning\n" if $debug;
 	# No thresholds reached = OK
 	} else {
 		$endresult = $ERRORS{'OK'};
@@ -1007,7 +1048,7 @@ if ($critical > 0) {
 	if ($critpct) {
 		if (eval "$critpct $cmp $critical") {
 			$endresult = $ERRORS{'CRITICAL'};
-			print "debug: critpct $cmp critical\n" if $debug;
+			print "# debug: critpct $cmp critical\n" if $debug;
 		} else {
 			$endresult = $ERRORS{'OK'} unless $endresult == $ERRORS{'WARNING'};
 		}
@@ -1015,14 +1056,14 @@ if ($critical > 0) {
 	} elsif ($parse_pattern) {
 		if (eval "$parse_count $cmp $critical") {
 			$endresult = $ERRORS{'CRITICAL'};
-			print "debug: parse_count $cmp critical\n" if $debug;
+			print "# debug: parse_count $cmp critical\n" if $debug;
 		} else {
 			$endresult = $ERRORS{'OK'} unless $endresult == $ERRORS{'WARNING'};
 		}
 	# Plain pattern matching
 	} elsif (eval "$pattern_count $cmp $critical") {
 			$endresult = $ERRORS{'CRITICAL'};
-			print "debug: pattern_count $cmp critical\n" if $debug;
+			print "# debug: pattern_count $cmp critical\n" if $debug;
 	# No thresholds reached = OK (but don't downgrade Warnings)
 	} else {
 		$endresult = $ERRORS{'OK'} unless $endresult == $ERRORS{'WARNING'};
@@ -1033,7 +1074,7 @@ if ($critical > 0) {
 $endresult = $ERRORS{'OK'} if ($warning == 0 && $critical == 0);
 $endresult = $ERRORS{'OK'} if $always_ok;
 
-print "debug: end result: $endresult\n"  if $debug;
+print "# debug: end result: $endresult\n"  if $debug;
 
 #
 # Generate output
@@ -1085,14 +1126,45 @@ if ($match_count) {
 # Filter any pipes from the output, as that is the Nagios output/perfdata separator
 $output =~ s/\|/\!/g;
 chomp($output);
-print "$state: " unless $noheader;
-print "Found $pattern_count lines (limit=$warning/$critical$max): " unless $noheader;
+
+# Construct final output
+my $final_output = '';
+
+$final_output .= "$state: " unless $noheader;
+$final_output .= "Found $pattern_count lines (limit=$warning/$critical$max): " unless $noheader;
+
 # Context is not saved if $parse_out was set (or nothing was found, obviously)
-print "\n" if ($context and not ($parse_out || $endresult == $ERRORS{'OK'}));
-print "$output";
-print " [$log_file]" if $show_filename;
-print "|$perfdata" if $perfdata;
-print "\n";
+$final_output .= "\n" if ($context and not ($parse_out || $endresult == $ERRORS{'OK'}));
+$final_output .= "$output";
+$final_output .= " [$log_file]" if $show_filename;
+
+print "# debug: final output: $final_output\n" if $debug;
+print "# debug: performance data: $perfdata\n" if $debug;
+
+# Print performance data
+if ($prometheus) {
+	# Output Prometheus metrics
+	print "# HELP check_result check_log3.pl return code\n";
+	print "# TYPE check_result gauge\n";
+	print "check_result{} $endresult\n";
+
+	print "# HELP lines Number of lines that matched the search query\n";
+	print "# TYPE lines gauge\n";
+	print "lines{} $pattern_count\n";
+
+	print "# HELP parsed Number of lines that matched the extended query\n";
+	print "# TYPE parsed gauge\n";
+	print "parsed{} $parse_count\n";
+
+	print "# Raw plugin output:\n";
+	print_final($final_output);
+} else {
+	# Print output
+	print_final($final_output);
+	# Output in Nagios perfdata format
+	print "|$perfdata" if $perfdata;
+	print "\n";
+}
 
 exit $ERRORS{'OK'} if $always_ok;
 exit $endresult;
@@ -1120,25 +1192,40 @@ sub print_encodings () {
 }
 
 # Die with error message and Nagios error code, for system errors
-sub ioerror() {
-	print @_;
-	print "\n";
-	exit $ERRORS{'CRITICAL'};
+sub ioerror {
+	print_final("$_\n", $ERRORS{'CRITICAL'});
 }
 
 # Die with usage info, for improper invocation
 sub usage {
-	my $format=shift;
-	printf($format,@_);
-	print "\n";
+	print_final("$_\n");
 	print_usage();
 	exit $ERRORS{'UNKNOWN'};
 }
 
 # Print version number
 sub print_version () {
-	print "$prog_name version $plugin_revision\n";
-	exit $ERRORS{'OK'};
+	print_final("$prog_name version $plugin_revision\n", $ERRORS{'OK'});
+}
+
+# Print text output in either normal or Prometheus format and optionally exit
+sub print_final {
+	my $msg = shift;
+	my $err = shift;
+
+	if ($prometheus) {
+		# Prepend each line with '#' to prevent interpretation as a metric
+		# Also terminates each line with a newline
+		$msg =~ s/\n/\n# /g;
+		print "# $msg\n";
+	} else {
+		print $msg;
+	}
+
+	# Exit with provided status code
+	if ($err) {
+		exit $err;
+	}
 }
 
 # Add a line to the read-back buffer, a FIFO queue with max length $c
@@ -1175,31 +1262,34 @@ sub read_next {
 # Documentation not in POD format (because we interpolate some variables)
 #
 
-# Short usage info
+# Short usage info (does not exit)
 sub print_usage () {
-	print "This is $prog_name version $plugin_revision\n\n";
-	print "Usage: $prog_name [ -v | --version ]\n";
-	print "Usage: $prog_name [ -h | --help ]\n";
-	print "Usage: $prog_name --manual\n";
-	print "Usage: $prog_name --list-encodings\n";
+	print_final("This is $prog_name version $plugin_revision
 
-	print "Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
+Usage: $prog_name [-v|--version]
+Usage: $prog_name [-h|--help]
+Usage: $prog_name --manual
+Usage: $prog_name --list-encodings
+
+Usage: $prog_name -l log_file|log_directory (-p pattern [-p pattern ...])|-P patternfile)
 	[-i] [-n negpattern|-f negpatternfile ] [-s seek_file|seek_base_dir] [--show-filename]
 	([-m glob-pattern] [-t most_recent|first_match|last_match] [--timestamp=time-spec] [-S string])
-        [-d] [-D] [-a] [-C {-|+}n] [-q] [--ultraq] [-Q] ([-e '{ eval block }'|-E script_file]|--secure)
+	[-d] [-D] [-a] [-C {-|+}n] [-q] [--ultraq] [-Q] [--prometheus]
+	([-e '{ eval block }'|-E script_file]|--secure)
 	([-N|--report-max=N]|[--report-only=N])|([-1|--stop-first-match]|[--report-first-match])
 	[--ok]|([-w warn_count] [-c crit_count] [--negate])
+	[--timeout=N] [--freshness=N]
 	[--input-enc=encoding] [--output-enc=encoding] [--crlf]
 	[--missing=STATE [--missing-msg=message]]
 	[-R|--restartcommand] [-M|--returnmessage]
 
-\n";
+");
 }
 
-# Long usage info
+# Long usage info and exit with OK state
 sub print_help () {
 	print_usage();
-	print "
+	print_final("
 This plugin scans arbitrary text files for regular expression matches.
 
 Log file control:
@@ -1214,6 +1304,9 @@ Log file control:
     generated there instead of in $tmpdir.
     If you specify the system's null device ($devnull), the entire log file
     will be read every time.
+-s, --freshness=<seconds>
+    Don't overwrite seek file unless it's at least this many seconds old.
+    The default is 0 (always overwrite the seek file).
 -m, --log-pattern=<expression>
     A glob(7) expression, used together with the -l option for selecting log
     files whose name is variable, such as time stamped or rotated logs.
@@ -1384,6 +1477,9 @@ Output control:
 --show-filename
     Print the name of the actual input file in the plugin output.  Useful in
     combination with dynamic filenames.
+--prometheus
+    Suppress all normal output and print the performance data in Prometheus
+    metrics format.  Normal output will be returned as a commment.
 
 Other options:
 
@@ -1413,7 +1509,6 @@ This Nagios plugin comes with ABSOLUTELY NO WARRANTY. You may redistribute
 copies of the plugins under the terms of the GNU General Public License.
 For more information about these matters, see the file named COPYING.
 
-";
-	exit $ERRORS{'OK'};
+", $ERRORS{'OK'});
 }
 
