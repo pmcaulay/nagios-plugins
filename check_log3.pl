@@ -951,7 +951,7 @@ unless ($seek_file eq $devnull) {
 	print "# debug: not writing seek position to null device\n" if $debug;
 }
 
-print "# debug: found $pattern_count maches, total lines $total, parse count $parse_count, limits: warn $warning crit $critical\n" if $debug;
+print "# debug: found $pattern_count matches in $total total lines, parse count $parse_count, limits: warn $warning crit $critical\n" if $debug;
 
 #
 # Compute exit code, terminate if no thresholds were exceeded
