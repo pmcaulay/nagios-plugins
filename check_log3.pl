@@ -1138,8 +1138,12 @@ $final_output .= "\n" if ($context and not ($parse_out || $endresult == $ERRORS{
 $final_output .= "$output";
 $final_output .= " [$log_file]" if $show_filename;
 
-print "# debug: final output: $final_output\n" if $debug;
-print "# debug: performance data: $perfdata\n" if $debug;
+if ($debug) {
+	my $debug_output = $final_output;
+	$debug_output =~ s/\n/\n# /g if $prometheus;
+	print "# debug: final output: $debug_output\n";
+	print "# debug: performance data: $perfdata\n";
+}
 
 # Print performance data
 if ($prometheus) {
@@ -1156,6 +1160,7 @@ if ($prometheus) {
 	print "# TYPE parsed gauge\n";
 	print "parsed{} $parse_count\n";
 
+	# Output as comment in Prometheus mode
 	print "# Raw plugin output:\n";
 	print_final($final_output);
 } else {
@@ -1198,7 +1203,8 @@ sub ioerror {
 
 # Die with usage info, for improper invocation
 sub usage {
-	print_final("$_\n");
+	my $msg = shift;
+	print_final("\nError: $msg\n");
 	print_usage();
 	exit $ERRORS{'UNKNOWN'};
 }
@@ -1222,8 +1228,8 @@ sub print_final {
 		print $msg;
 	}
 
-	# Exit with provided status code
-	if ($err) {
+	# Exit with optional status code
+	if (defined $err) {
 		exit $err;
 	}
 }
@@ -1239,7 +1245,7 @@ sub add_to_buffer {
 # The current seek position is preserved
 sub read_next {
 	my ($fh, $n) = @_;
-	my $lines;
+	my $lines = '';
 	my $i = 1;
 
 	# Save current position
