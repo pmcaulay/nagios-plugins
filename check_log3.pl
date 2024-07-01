@@ -326,7 +326,7 @@ use Encode::Byte;
 use Encode::Unicode;
 
 # Plugin version
-my $plugin_revision = '3.17.0';
+my $plugin_revision = '3.17.1';
 
 # Predeclare subroutines
 sub print_usage ();
