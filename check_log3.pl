@@ -1198,7 +1198,8 @@ sub print_encodings () {
 
 # Die with error message and Nagios error code, for system errors
 sub ioerror {
-	print_final("$_\n", $ERRORS{'CRITICAL'});
+	my $msg = shift;
+	print_final("$msg\n", $ERRORS{'CRITICAL'});
 }
 
 # Die with usage info, for improper invocation
